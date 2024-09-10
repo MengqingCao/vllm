@@ -43,7 +43,6 @@ class AscendAttentionBackend(AttentionBackend):
         num_kv_heads: int,
         head_size: int,
     ) -> Tuple[int, ...]:
-        # return (2, num_blocks, block_size, num_kv_heads * head_size)
         return (2, num_blocks, block_size, num_kv_heads * head_size)
 
     @staticmethod
@@ -305,23 +304,6 @@ class AscendMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
                 self.slot_mapping.extend([PAD_SLOT_ID] * seq_len)
                 return
 
-            # Mask the [0, start_idx) tokens of the prompt with
-            # PAD_SLOT_ID, where start_idx is max(0, seq_len -
-            # sliding_window). For example, if the prompt len is 10,
-            # sliding window is 8, and block size is 4, the first two
-            # tokens are masked and the slot mapping will be
-            # [-1, -1, 2, 3, 4, 5, 6, 7, 0, 1].
-            # block_table = block_tables[seq_id]
-            # self.slot_mapping.extend([PAD_SLOT_ID] * max(0, start_idx - context_len))
-            # self.slot_mapping.append([])
-            # self.slot_indices.append([])
-
-            # for i in range(max(start_idx, context_len), seq_len):
-            #     block_number = block_table[i // self.block_size]
-            #     block_offset = i % self.block_size
-            #     slot = block_number * self.block_size + block_offset
-            #     self.slot_mapping[-1].append(slot)
-            #     self.slot_indices[-1].append([block_number, block_offset])
 
     def build(
         self,
@@ -351,18 +333,33 @@ class AscendMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             )
 
         device = self.runner.device
+        use_captured_graph = cuda_graph_pad_size != -1
 
         max_query_len = max(query_lens)
         max_prefill_seq_len = max(self.prefill_seq_lens, default=0)
         max_decode_seq_len = max(self.curr_seq_lens, default=0)
         num_decode_tokens = self.num_decode_tokens
 
-        block_tables = make_tensor_with_pad(
-            self.block_tables,
-            pad=0,
-            dtype=torch.int,
-            device=device,
-        )
+        if use_captured_graph:
+            self.slot_mapping.extend([PAD_SLOT_ID] * cuda_graph_pad_size)
+            self.slot_mapping.extend([PAD_SLOT_ID, PAD_SLOT_ID] * cuda_graph_pad_size)
+            self.block_tables.extend([] * cuda_graph_pad_size)
+            num_decode_tokens = batch_size
+
+            # The shape of graph_block_tables is
+            # [max batch size, max context len // block size].
+            input_block_tables = self.runner.graph_block_tables[:batch_size]
+            for i, block_table in enumerate(self.block_tables):
+                if block_table:
+                    input_block_tables[i, : len(block_table)] = block_table
+            block_tables = torch.tensor(input_block_tables, device=device)
+        else:
+            block_tables = make_tensor_with_pad(
+                self.block_tables,
+                pad=0,
+                dtype=torch.int,
+                device=device,
+            )
         assert max_query_len > 0, "query_lens: {}".format(query_lens)
 
         context_lens_tensor = torch.tensor(
@@ -402,7 +399,7 @@ class AscendMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
         )
 
         return AscendMetadata(
-            is_prompt=True,  # TODO (cmq): check me
+            is_prompt=self.num_prefills > 0,
             max_seq_len=max_seq_len,
             num_prefills=self.num_prefills,
             slot_indices=slot_indices_tensor,
@@ -524,6 +521,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 # attention_mask = gen_input_mask(batch_size, attn_metadata.max_seq_len, query_len, kv_len)
 
                 if self.sliding_window is not None:
+                    print(100 * "*")
                     attention_mask = ~attention_mask
                     attention_mask = torch.triu(
                         attention_mask, diagonal=1 - self.sliding_window
@@ -532,6 +530,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 attn_metadata.attn_mask = attention_mask
 
             if self.alibi_slopes is not None and attn_metadata.pse_shift is None:
+                print(100 * "$")
                 attn_metadata.pse_shift = _make_alibi_bias(
                     self.alibi_slopes,
                     self.num_kv_heads,
@@ -539,6 +538,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     seq_len=attn_metadata.max_seq_len,
                     batch_size=batch_size,
                 )
+
             # shape of q/k/v [B,S*H] --> [B,S,N,D]
             query = query.view(
                 -1, attn_metadata.max_seq_len, self.num_heads, self.head_size
@@ -568,14 +568,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
             output = output.transpose(1, 2).reshape(
                 batch_size, -1, self.num_heads * self.head_size
             )
-            if output.shape[1] == 1:
-                output = output.squeeze(1)
         elif decode_meta := attn_metadata.decode_metadata:
             # FA for decoding phase
             assert kv_cache is not None
             # shape of query [B,S*H] --> [B,S,H]
             query = query.view(
                 batch_size,
+                # -1,
                 attn_metadata.max_query_len,
                 self.head_size * self.num_kv_heads,
             )
@@ -590,8 +589,12 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 block_table=attn_metadata.block_tables,
                 block_size=attn_metadata.block_size,  # max val of block_size == 512
                 actual_seq_lengths=attn_metadata.seq_lens,
-            ).squeeze(0)
-
+            )
+            # output = output.view(batch_size, self.head_size*self.num_kv_heads)
+        # [B,S,H] --> [B,H]
+        if output.shape[1] == 1:
+            output = output.squeeze(1)
+        # print(output.shape)
         return output
 
 
@@ -634,7 +637,7 @@ def _make_alibi_bias(
     seq_len: int,
     batch_size: int,
 ):
-    bias = torch.arange(seq_len, dtype=dtype, device="npu")
+    bias = torch.arange(seq_len, dtype=dtype, device=alibi_slopes.device)
     # NOTE(zhuohan): HF uses
     #     `bias = bias[None, :].repeat(seq_len, 1)`
     # here. We find that both biases give the same results, but

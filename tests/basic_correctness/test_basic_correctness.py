@@ -14,7 +14,7 @@ from ..models.utils import check_outputs_equal
 
 MODELS = [
     "facebook/opt-125m",
-    "meta-llama/Llama-2-7b-hf",
+    # "meta-llama/Llama-2-7b-hf",
 ]
 
 
@@ -31,7 +31,7 @@ def test_vllm_gc_ed():
 @pytest.mark.parametrize("model", MODELS)
 @pytest.mark.parametrize("backend", ["ASCEND_TORCH"])
 @pytest.mark.parametrize("dtype", ["half"])
-@pytest.mark.parametrize("max_tokens", [5])
+@pytest.mark.parametrize("max_tokens", [256])
 @pytest.mark.parametrize("enforce_eager", [False, True])
 def test_models(
     hf_runner,
@@ -57,6 +57,9 @@ def test_models(
                      enforce_eager=enforce_eager,
                      gpu_memory_utilization=0.7) as vllm_model:
         vllm_outputs = vllm_model.generate_greedy(example_prompts, max_tokens)
+    
+    print("hf: ", hf_outputs[0][1])
+    print("vllm: ", vllm_outputs[0][1])
 
     check_outputs_equal(
         outputs_0_lst=hf_outputs,

@@ -217,6 +217,7 @@ def _prepare_seq_groups(
         # If the current seq group is in decode stage, it is None.
         seq_len: Optional[int] = None
         query_len: Optional[int] = None
+        padding_len: Optional[int] = 0
         prompt_logprob_indices: List[int] = []
         sample_indices: List[int] = []
         do_sample = seq_group_metadata.do_sample
@@ -238,6 +239,7 @@ def _prepare_seq_groups(
             prompt_logprob_len = (query_len - num_prefill_sample
                                   if do_sample else query_len)
             sample_len = num_prefill_sample if do_sample else 0
+            padding_len = max(seq_lens) - sample_len - prompt_logprob_len
         else:
             # Decode
             prompt_logprob_len = 0
@@ -262,7 +264,7 @@ def _prepare_seq_groups(
         if do_sample:
             selected_token_indices.extend(
                 range(model_output_idx, model_output_idx + sample_len))
-        model_output_idx += sample_len
+        model_output_idx += sample_len + padding_len
 
         # We now find indices for logprob computation and sampling.
         """
@@ -471,6 +473,7 @@ class SamplingTensors:
                    vocab_size: int, extra_seeds_to_generate: int,
                    device: torch.device,
                    dtype: torch.dtype) -> "SamplingTensors":
+        # print(100*"&")
         # Note that the performance will be very bad without
         # pinned memory.
         pin_memory = is_pin_memory_available()
@@ -478,6 +481,7 @@ class SamplingTensors:
         do_penalties = prompt_tokens or output_tokens
 
         if do_penalties:
+            # print(100*"$")
             prompt_t = make_tensor_with_pad(
                 prompt_tokens,
                 vocab_size,

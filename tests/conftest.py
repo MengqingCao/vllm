@@ -89,7 +89,7 @@ def cleanup():
         torch.distributed.destroy_process_group()
     gc.collect()
     if not is_cpu():
-        torch.cuda.empty_cache()
+        torch.npu.empty_cache()
 
 
 @pytest.fixture()
@@ -140,7 +140,7 @@ class HfRunner:
 
     def wrap_device(self, input: _T) -> _T:
         if not is_cpu():
-            return input.to("cuda")
+            return input.to("npu")
         else:
             return input.to("cpu")
 
