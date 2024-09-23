@@ -15,8 +15,8 @@ prompts = [
 sampling_params = SamplingParams(max_tokens=100, temperature=0.0)
 
 # Create an LLM.
-# llm = LLM(model="facebook/opt-125m")
-llm = LLM(model="Qwen/Qwen2-7B-Instruct")
+llm = LLM(model="facebook/opt-125m", tensor_parallel_size=2, distributed_executor_backend="mp")
+# llm = LLM(model="Qwen/Qwen2-7B-Instruct")
 # llm = LLM(model="/workspace/cmq/models/LLM-Research/Meta-Llama-3-8B-Instruct")
 # Generate texts from the prompts. The output is a list of RequestOutput objects
 # that contain the prompt, generated text, and other information.
