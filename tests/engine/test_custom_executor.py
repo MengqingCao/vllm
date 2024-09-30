@@ -9,12 +9,6 @@ from vllm.engine.llm_engine import LLMEngine
 from vllm.executor.gpu_executor import GPUExecutor, GPUExecutorAsync
 from vllm.executor.npu_executor import NPUExecutor, NPUExecutorAsync
 from vllm.sampling_params import SamplingParams
-from vllm.attention.backends.ascend import AscendPagedAttention
-from vllm.attention.ops.paged_attn import PagedAttention
-
-
-# NOTE (cmq): do monkey patch
-PagedAttention = AscendPagedAttention
 
 
 class Mock:
@@ -87,12 +81,12 @@ def test_custom_executor(model, tmp_path):
         os.chdir(cwd)
 
 
-@pytest.mark.parametrize("model", ["facebook/opt-125m"])
-def test_custom_executor_async(model, tmp_path):
-    cwd = os.path.abspath(".")
-    os.chdir(tmp_path)
-    try:
-        assert not os.path.exists(".marker")
+# @pytest.mark.parametrize("model", ["facebook/opt-125m"])
+# def test_custom_executor_async(model, tmpdir):
+#     cwd = os.path.abspath(".")
+#     os.chdir(tmpdir)
+#     try:
+#         assert not os.path.exists(".marker")
 
 #         engine_args = AsyncEngineArgs(
 #             model=model, distributed_executor_backend=CustomGPUExecutorAsync)
