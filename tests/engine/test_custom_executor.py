@@ -68,9 +68,9 @@ def test_custom_executor_type_checking(model):
 
 
 @pytest.mark.parametrize("model", ["facebook/opt-125m"])
-def test_custom_executor(model, tmpdir):
+def test_custom_executor(model, tmp_path):
     cwd = os.path.abspath(".")
-    os.chdir(tmpdir)
+    os.chdir(tmp_path)
     try:
         assert not os.path.exists(".marker")
 
@@ -87,12 +87,12 @@ def test_custom_executor(model, tmpdir):
         os.chdir(cwd)
 
 
-# @pytest.mark.parametrize("model", ["facebook/opt-125m"])
-# def test_custom_executor_async(model, tmpdir):
-#     cwd = os.path.abspath(".")
-#     os.chdir(tmpdir)
-#     try:
-#         assert not os.path.exists(".marker")
+@pytest.mark.parametrize("model", ["facebook/opt-125m"])
+def test_custom_executor_async(model, tmp_path):
+    cwd = os.path.abspath(".")
+    os.chdir(tmp_path)
+    try:
+        assert not os.path.exists(".marker")
 
 #         engine_args = AsyncEngineArgs(
 #             model=model, distributed_executor_backend=CustomGPUExecutorAsync)

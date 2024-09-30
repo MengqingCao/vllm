@@ -50,6 +50,21 @@ try:
 except Exception:
     pass
 
+is_xpu = False
+
+try:
+    import torch
+    if hasattr(torch, 'xpu') and torch.xpu.is_available():
+        is_xpu = True
+except Exception:
+    pass
+
+is_cpu = False
+try:
+    from importlib.metadata import version
+    is_cpu = "cpu" in version("vllm")
+except Exception:
+    pass
 
 if is_tpu:
     # people might install pytorch built with cuda but run on tpu
@@ -65,6 +80,12 @@ elif is_rocm:
 elif is_npu:
     from .ascend import AscendPlatform
     current_platform = AscendPlatform()
+elif is_xpu:
+    from .xpu import XPUPlatform
+    current_platform = XPUPlatform()
+elif is_cpu:
+    from .cpu import CpuPlatform
+    current_platform = CpuPlatform()
 else:
     current_platform = UnspecifiedPlatform()
 
