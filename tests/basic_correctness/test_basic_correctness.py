@@ -18,8 +18,8 @@ from ..models.utils import check_outputs_equal
 from ..utils import multi_gpu_test
 
 MODELS = [
-    "facebook/opt-125m",
-    "meta-llama/Llama-2-7b-hf",
+    "facebook/opt-125m", "/home/models/llama-2-7b/"
+    # "meta-llama/Llama-2-7b-hf",
 ]
 
 TARGET_TEST_SUITE = os.environ.get("TARGET_TEST_SUITE", "L4")

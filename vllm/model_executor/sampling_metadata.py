@@ -261,7 +261,7 @@ def _prepare_seq_groups(
         # If the current seq group is in decode stage, it is None.
         seq_len: Optional[int] = None
         query_len: Optional[int] = None
-        padding_len: Optional[int] = 0
+        padding_len: int = 0
         prompt_logprob_indices: List[int] = (sample_obj.prompt_logprob_indices
                                              if cache is not None else [])
         sample_indices: List[int] = (sample_obj.sample_indices
