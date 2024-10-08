@@ -1,5 +1,4 @@
 import enum
-import gc
 from typing import NamedTuple, Optional, Tuple, Union
 
 import torch
@@ -108,34 +107,6 @@ class Platform:
         """
         return torch.inference_mode(mode=True)
 
-    @staticmethod
-    def current_memory_usage():
-        return None
-
-    def memory_profiler(self):
-        return PlatformMemoryProfiler(self)
-
 
 class UnspecifiedPlatform(Platform):
     _enum = PlatformEnum.UNSPECIFIED
-
-
-class PlatformMemoryProfiler:
-
-    def __init__(self,
-                 platform: Platform,
-                 device: Optional[torch.types.Device] = None):
-        self.device = device
-        self.platform = platform
-
-    def __enter__(self):
-        self.initial_memory = self.platform.current_memory_usage(self.device)
-        # This allows us to call methods of the context manager if needed
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.final_memory = self.platform.current_memory_usage(self.device)
-        self.consumed_memory = self.final_memory - self.initial_memory
-
-        # Force garbage collection
-        gc.collect()

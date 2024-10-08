@@ -545,10 +545,12 @@ class LLMEngine:
                 executor_class = XPUExecutor
         elif engine_config.device_config.device_type == "npu":
             if distributed_executor_backend == "mp":
-                from vllm.executor.multiproc_npu_executor import MultiprocessingNPUExecutorAsync
+                from vllm.executor.multiproc_npu_executor import (
+                    MultiprocessingNPUExecutorAsync)
                 executor_class = MultiprocessingNPUExecutorAsync
             elif distributed_executor_backend == "ray":
-                raise NotImplementedError("ray is not implemented in Ascend NPU currently")
+                raise NotImplementedError(
+                    "ray is not implemented in Ascend NPU currently")
             else:
                 from vllm.executor.npu_executor import NPUExecutorAsync
                 executor_class = NPUExecutorAsync
@@ -993,7 +995,7 @@ class LLMEngine:
               prefill seq_group
             num_outputs: int - number of output tokens being processed for the
               given seq_group
-            is_first_step_output: Optional[bool] - 
+            is_first_step_output: Optional[bool] -
                 If multi-step is enabled and num_outputs is 1, this value
                 indicates if this outputs belongs to the first step in the
                 multi-step.
