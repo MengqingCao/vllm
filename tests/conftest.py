@@ -249,7 +249,7 @@ class HfRunner:
 
     def wrap_device(self, input: _T, device: Optional[str] = None) -> _T:
         if device is None:
-            return self.wrap_device(input, "cpu" if is_cpu() else "cuda")
+            return self.wrap_device(input, "cpu" if is_cpu() else "npu")
 
         if hasattr(input, "device") and input.device.type == device:
             return input
