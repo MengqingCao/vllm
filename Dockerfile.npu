@@ -9,15 +9,7 @@ RUN apt-get update -y && \
     apt-get install -y python3-pip git vim
 WORKDIR /workspace
 
-# copy requirements
-COPY requirements-build.txt /workspace/vllm/
-COPY requirements-common.txt /workspace/vllm/
-COPY requirements-npu.txt /workspace/vllm/
-
-COPY vllm/ /workspace/vllm/vllm
-COPY setup.py /workspace/vllm/
-COPY examples/ /workspace/vllm/examples
-COPY tests/ /workspace/vllm/tests
+COPY . /workspace/vllm/
 
 # install build requirements
 RUN PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu" python3 -m pip install -r /workspace/vllm/requirements-build.txt
