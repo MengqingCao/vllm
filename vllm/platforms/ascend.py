@@ -24,7 +24,8 @@ class AscendPlatform(Platform):
 
     @classmethod
     def get_device_capability(cls, device_id: int = 0):
-        raise RuntimeError("Ascend NPU does not have device capability.")
+        # raise RuntimeError("Ascend NPU does not have device capability.")
+        return None
 
     @classmethod
     def get_device_name(cls, device_id: int = 0) -> str:

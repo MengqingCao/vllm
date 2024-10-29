@@ -45,10 +45,44 @@ class ModelInputForNPUBuilder(ModelInputForGPUBuilder):
             # This may happen when all prefill requests hit
             # prefix caching and there is no decode request.
             return self.model_input_cls()
-        input_positions = [
-            flatten_2d_lists(inter_data.input_positions)
-            for inter_data in self.inter_data_list
-        ]
+
+        mrope_input_positions: Optional[List[List[int]]] = None
+        if any(inter_data.mrope_input_positions is not None
+               for inter_data in self.inter_data_list):
+            mrope_input_positions = [[] for _ in range(3)]
+            # calculate max position length for padding
+            input_position_lens = [
+                len(inter_data.input_positions[0])
+                for inter_data in self.inter_data_list
+            ]
+            max_pos_len = max(input_position_lens)
+
+            for idx in range(3):
+                for inter_data in self.inter_data_list:
+                    msections = inter_data.mrope_input_positions
+                    if msections is None:
+                        for _seq_input_positions in inter_data.input_positions:
+                            # zero pad
+                            _seq_input_positions.extend(
+                                [0] *
+                                (max_pos_len - len(_seq_input_positions)))
+                            mrope_input_positions[idx].extend(
+                                _seq_input_positions)
+                    else:
+                        for _seq_mrope_input_positions in msections:
+                            # zero pad
+                            _seq_mrope_input_positions[idx].extend(
+                                [0] * (max_pos_len -
+                                       len(_seq_mrope_input_positions[idx])))
+                            mrope_input_positions[idx].extend(
+                                _seq_mrope_input_positions[idx])
+            input_positions = None
+        else:
+            input_positions = [
+                flatten_2d_lists(inter_data.input_positions)
+                for inter_data in self.inter_data_list
+            ]
+
         seq_lens = []
         max_decode_seq_len = 0
         for inter_data in self.inter_data_list:
@@ -75,21 +109,41 @@ class ModelInputForNPUBuilder(ModelInputForGPUBuilder):
         if self.inter_data_list[0].is_prompt:
             input_tokens_tensor = make_tensor_with_pad(
                 input_tokens, 0, dtype=torch.int, device=self.runner.device)
-            input_positions_tensor = make_tensor_with_pad(
-                input_positions, 0, dtype=torch.int, device=self.runner.device)
             input_tokens_tensor = torch.flatten(input_tokens_tensor)
-            input_positions_tensor = torch.flatten(input_positions_tensor)
+            if mrope_input_positions is not None:
+                mrope_input_positions_tensor = make_tensor_with_pad(
+                    mrope_input_positions,
+                    0,
+                    dtype=torch.int,
+                    device=self.runner.device)
+                input_positions_tensor = torch.tensor(
+                    mrope_input_positions_tensor,
+                    dtype=torch.long,
+                    device=self.runner.device)
+            else:
+                input_positions_tensor = make_tensor_with_pad(
+                    input_positions,
+                    0,
+                    dtype=torch.int,
+                    device=self.runner.device)
+                input_positions_tensor = torch.flatten(input_positions_tensor)
+
             max_seq_len = max(seq_lens)
             seq_lens = len(seq_lens) * [max_seq_len]
         else:
             input_tokens_tensor = torch.tensor(flatten_2d_lists(input_tokens),
                                                dtype=torch.long,
                                                device=self.runner.device)
-            input_positions_tensor = torch.tensor(
-                flatten_2d_lists(input_positions),
-                dtype=torch.long,
-                device=self.runner.device)
-
+            if mrope_input_positions is not None:
+                input_positions_tensor = torch.tensor(
+                    mrope_input_positions,
+                    dtype=torch.long,
+                    device=self.runner.device)
+            else:
+                input_positions_tensor = torch.tensor(
+                    flatten_2d_lists(input_positions),
+                    dtype=torch.long,
+                    device=self.runner.device)
         # Sequence and query lengths.
         seq_lens.extend([1] * cuda_graph_pad_size)
 

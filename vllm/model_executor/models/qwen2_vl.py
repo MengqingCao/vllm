@@ -206,6 +206,8 @@ class Qwen2VisionAttention(nn.Module):
             backend_by_env_var: Optional[str] = envs.VLLM_ATTENTION_BACKEND
             if backend_by_env_var is not None:
                 selected_backend = backend_name_to_enum(backend_by_env_var)
+            elif current_platform.is_npu():
+                selected_backend = _Backend.ASCEND
         if selected_backend is None:
             # For Volta and Turing GPUs, use xformers instead.
             device_available = current_platform.has_device_capability(80)
@@ -226,7 +228,7 @@ class Qwen2VisionAttention(nn.Module):
         else:
             if selected_backend == _Backend.FLASH_ATTN:
                 self._use_flash_attn = True
-            elif selected_backend == _Backend.XFORMERS:
+            elif selected_backend in [_Backend.XFORMERS, _Backend.ASCEND]:
                 self._use_flash_attn = False
             else:
                 raise RuntimeError(
@@ -294,6 +296,22 @@ class Qwen2VisionAttention(nn.Module):
                                                     k,
                                                     v,
                                                     attention_mask,
+                                                    dropout_p=0.0)
+            context_layer = rearrange(output, "b h s d -> b s h d ")
+        elif current_platform.is_npu():
+            # TODO (cmq): change to use fusion ops instead for performance
+            seq_length = q.size(1)
+            q, k, v = [rearrange(x, "b s h d -> b h s d") for x in [q, k, v]]
+            attention_mask = torch.zeros([1, seq_length, seq_length],
+                                         device=q.device,
+                                         dtype=torch.bool)
+            for i in range(1, len(cu_seqlens)):
+                attention_mask[..., cu_seqlens[i - 1]:cu_seqlens[i],
+                               cu_seqlens[i - 1]:cu_seqlens[i]] = True
+            output = F.scaled_dot_product_attention(q.npu(),
+                                                    k.npu(),
+                                                    v.npu(),
+                                                    attention_mask.npu(),
                                                     dropout_p=0.0)
             context_layer = rearrange(output, "b h s d -> b s h d ")
         else:
