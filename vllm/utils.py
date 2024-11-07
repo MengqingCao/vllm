@@ -88,6 +88,9 @@ STR_NOT_IMPL_ENC_DEC_PROMPT_ADAPTER = ("Prompt adapters are not "
                                        "currently supported with encoder/"
                                        "decoder models.")
 
+STR_NOT_IMPL_ENC_DEC_CPU = ("CPU is not currently supported with "
+                            "encoder/decoder models.")
+
 # Efficiently import all enc/dec error strings
 # rather than having to import all of the above
 STR_NOT_IMPL_ENC_DEC_ERR_STRS = {
@@ -102,6 +105,7 @@ STR_NOT_IMPL_ENC_DEC_ERR_STRS = {
     "STR_NOT_IMPL_ENC_DEC_SPEC_DEC": STR_NOT_IMPL_ENC_DEC_SPEC_DEC,
     "STR_NOT_IMPL_ENC_DEC_BACKEND": STR_NOT_IMPL_ENC_DEC_BACKEND,
     "STR_NOT_IMPL_ENC_DEC_PROMPT_ADAPTER": STR_NOT_IMPL_ENC_DEC_PROMPT_ADAPTER,
+    "STR_NOT_IMPL_ENC_DEC_CPU": STR_NOT_IMPL_ENC_DEC_CPU
 }
 
 # Constants related to forcing the attention backend selection
@@ -745,6 +749,9 @@ class DeviceMemoryProfiler:
         elif current_platform.is_xpu():
             torch.xpu.reset_peak_memory_stats(self.device)  # type: ignore
             mem = torch.xpu.max_memory_allocated(self.device)  # type: ignore
+        elif current_platform.is_npu():
+            torch.npu.reset_peak_memory_stats(self.device)  # type: ignore
+            mem = torch.npu.max_memory_allocated(self.device)  # type: ignore
         return mem
 
     def __enter__(self):

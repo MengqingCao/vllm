@@ -15,8 +15,7 @@ from vllm.platforms import current_platform
 from vllm.tracing import is_otel_available, otel_import_error_traceback
 from vllm.transformers_utils.config import (ConfigFormat, get_config,
                                             get_hf_image_processor_config,
-                                            get_hf_text_config,
-                                            is_encoder_decoder, uses_mrope)
+                                            get_hf_text_config)
 from vllm.utils import (GiB_bytes, cuda_device_count_stateless, get_cpu_memory,
                         print_warning_once)
 
@@ -408,6 +407,10 @@ class ModelConfig:
                 raise ValueError(
                     f"{self.quantization} quantization is currently not "
                     f"supported in TPU Backend.")
+            if current_platform.is_npu():
+                raise NotImplementedError(
+                    "Quantization is currently not supported in Ascend backend."
+                )
             if self.quantization not in optimized_quantization_methods:
                 logger.warning(
                     "%s quantization is not fully "
@@ -668,13 +671,12 @@ class ModelConfig:
         return self.multimodal_config
 
     @property
-    def is_encoder_decoder(self) -> bool:
+    def is_encoder_decoder_model(self) -> bool:
         """Extract the HF encoder/decoder model flag."""
-        return is_encoder_decoder(self.hf_config)
-
-    @property
-    def uses_mrope(self) -> bool:
-        return uses_mrope(self.hf_config)
+        return getattr(
+            self.hf_config, "is_encoder_decoder",
+            False) or (hasattr(self.hf_config, "text_config") and getattr(
+                self.hf_config.text_config, "is_encoder_decoder", False))
 
     @property
     def is_multimodal_model(self) -> bool:
@@ -1185,6 +1187,8 @@ class DeviceConfig:
                 self.device_type = "cpu"
             elif current_platform.is_xpu():
                 self.device_type = "xpu"
+            elif current_platform.is_npu():
+                self.device_type = "npu"
             else:
                 raise RuntimeError("Failed to infer device type")
         else:

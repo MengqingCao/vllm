@@ -18,8 +18,9 @@ from ..models.utils import check_outputs_equal
 from ..utils import multi_gpu_test
 
 MODELS = [
-    "facebook/opt-125m",
-    "meta-llama/Llama-3.2-1B",
+    # "facebook/opt-125m",
+    # "meta-llama/Llama-2-7b-hf",
+    "/home/cmq/code/models/LLM-Research/Meta-Llama-3-8B-Instruct",
 ]
 
 TARGET_TEST_SUITE = os.environ.get("TARGET_TEST_SUITE", "L4")
@@ -36,10 +37,10 @@ def test_vllm_gc_ed():
 
 
 @pytest.mark.parametrize("model", MODELS)
-@pytest.mark.parametrize("backend", ["FLASH_ATTN", "XFORMERS", "FLASHINFER"])
+@pytest.mark.parametrize("backend", ["ASCEND"])
 @pytest.mark.parametrize("dtype", ["half"])
-@pytest.mark.parametrize("max_tokens", [5])
-@pytest.mark.parametrize("enforce_eager", [False, True])
+@pytest.mark.parametrize("max_tokens", [50])
+@pytest.mark.parametrize("enforce_eager", [False])
 def test_models(
     hf_runner,
     vllm_runner,

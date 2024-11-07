@@ -32,7 +32,8 @@ if not current_platform.is_cpu():
         "openbmb/MiniCPM3-4B",
     ]
 
-target_dtype = "half"
+# TODO: remove this after CPU float16 support ready
+target_dtype = "float" if current_platform.is_cpu() else "half"
 
 
 @pytest.mark.parametrize("model", MODELS)
