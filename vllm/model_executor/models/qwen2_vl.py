@@ -220,7 +220,8 @@ class Qwen2VisionAttention(nn.Module):
         # Detect attention implementation.
         self.attn_backend: _Backend = get_vit_attn_backend()
         if self.attn_backend not in {
-                _Backend.FLASH_ATTN, _Backend.TORCH_SDPA, _Backend.XFORMERS, _Backend.ASCEND
+                _Backend.FLASH_ATTN, _Backend.TORCH_SDPA, _Backend.XFORMERS,
+                _Backend.ASCEND
         }:
             raise RuntimeError(
                 f"Qwen2-VL does not support {self.attn_backend} backend now.")
@@ -272,7 +273,7 @@ class Qwen2VisionAttention(nn.Module):
             context_layer = rearrange(output,
                                       "(b s) ... -> b s ...",
                                       b=batch_size)
-        elif self.attn_backend == _Backend.TORCH_SDPA:
+        elif self.attn_backend in [_Backend.TORCH_SDPA, _Backend.ASCEND]:
             seq_length = q.size(1)
             q, k, v = (rearrange(x, "b s h d -> b h s d") for x in [q, k, v])
             attention_mask = torch.zeros([1, seq_length, seq_length],
@@ -285,22 +286,6 @@ class Qwen2VisionAttention(nn.Module):
                                                     k,
                                                     v,
                                                     attention_mask,
-                                                    dropout_p=0.0)
-            context_layer = rearrange(output, "b h s d -> b s h d ")
-        elif self.attn_backend == _Backend.ASCEND:
-            # TODO (cmq): change to use fusion ops instead for performance
-            seq_length = q.size(1)
-            q, k, v = [rearrange(x, "b s h d -> b h s d") for x in [q, k, v]]
-            attention_mask = torch.zeros([1, seq_length, seq_length],
-                                         device=q.device,
-                                         dtype=torch.bool)
-            for i in range(1, len(cu_seqlens)):
-                attention_mask[..., cu_seqlens[i - 1]:cu_seqlens[i],
-                               cu_seqlens[i - 1]:cu_seqlens[i]] = True
-            output = F.scaled_dot_product_attention(q.npu(),
-                                                    k.npu(),
-                                                    v.npu(),
-                                                    attention_mask.npu(),
                                                     dropout_p=0.0)
             context_layer = rearrange(output, "b h s d -> b s h d ")
         elif self.attn_backend == _Backend.XFORMERS:

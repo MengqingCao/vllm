@@ -222,7 +222,8 @@ class AscendMetadata(AttentionMetadata, PagedAttentionMetadata):
             encoder_seq_lens=self.encoder_seq_lens,
             encoder_seq_lens_tensor=self.encoder_seq_lens_tensor,
             max_encoder_seq_len=self.max_encoder_seq_len,
-        )
+            multi_modal_placeholder_index_maps=self.
+            multi_modal_placeholder_index_maps)
         return self._cached_prefill_metadata
 
     @property
@@ -260,7 +261,8 @@ class AscendMetadata(AttentionMetadata, PagedAttentionMetadata):
             encoder_seq_lens=self.encoder_seq_lens,
             encoder_seq_lens_tensor=self.encoder_seq_lens_tensor,
             max_encoder_seq_len=self.max_encoder_seq_len,
-        )
+            multi_modal_placeholder_index_maps=self.
+            multi_modal_placeholder_index_maps)
         return self._cached_decode_metadata
 
 
@@ -355,9 +357,9 @@ class AscendMetadataBuilder(CommonMetadataBuilder[AscendMetadata]):
 
             # Compute slot mapping.
             is_profile_run = is_block_tables_empty(block_tables)
-            start_idx = compute_slot_mapping_start_idx(
-                is_prompt, query_len, context_len, self.sliding_window,
-                self.use_v2_block_manager)
+            start_idx = compute_slot_mapping_start_idx(is_prompt, query_len,
+                                                       context_len,
+                                                       self.sliding_window)
 
             self.compute_npu_slot_indices(is_profile_run, self.slot_mapping,
                                           seq_id, seq_len, context_len,
@@ -427,7 +429,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # view q k v to BSH
         num_tokens = query.shape[0]
 
-        if kv_cache is not None:
+        if kv_cache is not None and len(kv_cache) >= 2:
             slot_indices = attn_metadata.slot_mapping
             key_cache, value_cache = kv_cache[0], kv_cache[1]
             AscendPagedAttention.write_to_paged_cache(
