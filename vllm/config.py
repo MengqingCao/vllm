@@ -452,6 +452,10 @@ class ModelConfig:
                 raise ValueError(
                     f"{self.quantization} quantization is currently not "
                     f"supported in Neuron Backend.")
+            if current_platform.is_npu():
+                raise NotImplementedError(
+                    "Quantization is currently not supported in Ascend backend."
+                )
 
     def _verify_cuda_graph(self) -> None:
         if self.max_seq_len_to_capture is None:
@@ -1213,6 +1217,8 @@ class DeviceConfig:
                 self.device_type = "cpu"
             elif current_platform.is_xpu():
                 self.device_type = "xpu"
+            elif current_platform.is_npu():
+                self.device_type = "npu"
             else:
                 raise RuntimeError("Failed to infer device type")
         else:

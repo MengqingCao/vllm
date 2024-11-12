@@ -82,6 +82,13 @@ try:
 except Exception:
     pass
 
+is_npu = False
+try:
+    import torch_npu  # noqa: F401
+    is_npu = True
+except Exception:
+    pass
+
 if is_tpu:
     # people might install pytorch built with cuda but run on tpu
     # so we need to check tpu first
@@ -108,6 +115,9 @@ elif is_neuron:
 elif is_openvino:
     from .openvino import OpenVinoPlatform
     current_platform = OpenVinoPlatform()
+elif is_npu:
+    from .ascend import AscendPlatform
+    current_platform = AscendPlatform()
 else:
     current_platform = UnspecifiedPlatform()
 

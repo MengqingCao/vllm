@@ -611,6 +611,8 @@ def get_vit_attn_backend() -> _Backend:
                 selected_backend = _Backend.XFORMERS
         elif current_platform.is_cpu():
             selected_backend = _Backend.TORCH_SDPA
+        elif current_platform.is_npu():
+            selected_backend = _Backend.ASCEND
         else:
             selected_backend = _Backend.XFORMERS
     return selected_backend
