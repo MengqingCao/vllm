@@ -552,16 +552,21 @@ class LLMEngine:
                 from vllm.executor.xpu_executor import XPUExecutor
                 executor_class = XPUExecutor
         elif engine_config.device_config.device_type == "npu":
-            if distributed_executor_backend == "mp":
-                from vllm.executor.multiproc_npu_executor import (
-                    MultiprocessingNPUExecutorAsync)
-                executor_class = MultiprocessingNPUExecutorAsync
-            elif distributed_executor_backend == "ray":
+            if distributed_executor_backend == "ray":
                 raise NotImplementedError(
                     "ray is not implemented in Ascend NPU currently")
+                # # TODO (cmq): support ray in npu
+                # initialize_ray_cluster(engine_config.parallel_config)
+                # from vllm.executor.ray_npu_executor import (
+                #     RayNPUExecutor)
+                # executor_class = RayNPUExecutor
+            elif distributed_executor_backend == "mp":
+                from vllm.executor.multiproc_npu_executor import (
+                    MultiprocessingNPUExecutor)
+                executor_class = MultiprocessingNPUExecutor
             else:
-                from vllm.executor.npu_executor import NPUExecutorAsync
-                executor_class = NPUExecutorAsync
+                from vllm.executor.npu_executor import NPUExecutor
+                executor_class = NPUExecutor
         elif distributed_executor_backend == "ray":
             initialize_ray_cluster(engine_config.parallel_config)
             from vllm.executor.ray_gpu_executor import RayGPUExecutor
