@@ -22,6 +22,7 @@ class _Backend(enum.Enum):
     HPU_ATTN = enum.auto()
     PALLAS = enum.auto()
     IPEX = enum.auto()
+    ASCEND = enum.auto()
     NO_ATTENTION = enum.auto()
 
 
@@ -34,6 +35,7 @@ class PlatformEnum(enum.Enum):
     CPU = enum.auto()
     NEURON = enum.auto()
     OPENVINO = enum.auto()
+    ASCEND = enum.auto()
     UNSPECIFIED = enum.auto()
 
 
@@ -87,6 +89,9 @@ class Platform:
 
     def is_openvino(self) -> bool:
         return self._enum == PlatformEnum.OPENVINO
+
+    def is_npu(self) -> bool:
+        return self._enum == PlatformEnum.ASCEND
 
     def is_cuda_alike(self) -> bool:
         """Stateless version of :func:`torch.cuda.is_available`."""
