@@ -61,7 +61,7 @@ _ROCM_PARTIALLY_SUPPORTED_MODELS: Dict[str, str] = {
 
 class RocmPlatform(Platform):
     _enum = PlatformEnum.ROCM
-    device_name: str = "rocm"
+    device_name: str = "GPU"
     device_type: str = "cuda"
     dispatch_key: str = "CUDA"
     supported_quantization: list[str] = [

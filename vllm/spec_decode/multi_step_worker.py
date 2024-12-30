@@ -4,6 +4,7 @@ from typing import Dict, List, Set, Tuple
 
 import torch
 
+from vllm.config import VllmConfig
 from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.platforms import current_platform
 from vllm.sequence import (ExecuteModelRequest, HiddenStates, SequenceData,
@@ -16,10 +17,11 @@ from vllm.spec_decode.interfaces import (SpeculativeProposals,
                                          SpeculativeProposer)
 from vllm.spec_decode.proposer_worker_base import ProposerWorkerBase
 from vllm.spec_decode.top1_proposer import Top1Proposer
-from vllm.worker.worker_base import WorkerWrapperBase
+from vllm.utils import resolve_obj_by_qualname
+from vllm.worker.worker_base import DelegateWorkerBase
 
 
-class MultiStepWorker(ProposerWorkerBase, WorkerWrapperBase):
+class MultiStepWorker(ProposerWorkerBase, DelegateWorkerBase):
     """The MultiStepWorker is equivalent to a Worker except that it allows
     multiple forward passes in a single call, assuming the scheduler has
     allocated enough space to store the additional KV. This reduces overhead
@@ -32,15 +34,15 @@ class MultiStepWorker(ProposerWorkerBase, WorkerWrapperBase):
     """
 
     def __init__(self, *args, **kwargs):
-        super().__init__(kwargs.get("vllm_config"))
-        self.init_worker(*args, **kwargs)
-
+        vllm_config: VllmConfig = kwargs.get("vllm_config")
+        super().__init__(vllm_config=vllm_config)
+        cls = resolve_obj_by_qualname(vllm_config.parallel_config.worker_cls)
+        self.worker = cls(*args, **kwargs)
         # Lazy initialization list.
         self._proposer: SpeculativeProposer
 
     def init_device(self) -> None:
         self.worker.init_device()
-
         self._proposer = Top1Proposer(
             weakref.proxy(self),  # type: ignore[arg-type]
             self.device,
@@ -55,18 +57,6 @@ class MultiStepWorker(ProposerWorkerBase, WorkerWrapperBase):
     def set_should_modify_greedy_probs_inplace(self) -> None:
         self.model_runner.model.sampler.should_modify_greedy_probs_inplace = (
             True)
-
-    def determine_num_available_blocks(self) -> Tuple[int, int]:
-        return self.worker.determine_num_available_blocks()
-
-    def get_cache_block_size_bytes(self) -> int:
-        return self.worker.get_cache_block_size_bytes()
-
-    def initialize_cache(self, *args, **kwargs) -> None:
-        self.worker.initialize_cache(*args, **kwargs)
-
-    def execute_model(self, *args, **kwargs) -> List[SamplerOutput]:
-        return self.worker.execute_model(*args, **kwargs)
 
     @torch.inference_mode()
     def sampler_output(
