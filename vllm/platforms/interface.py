@@ -2,7 +2,7 @@ import enum
 import platform
 import random
 from platform import uname
-from typing import TYPE_CHECKING, NamedTuple, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, NamedTuple, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -114,6 +114,11 @@ class Platform:
     @classmethod
     def get_default_attn_backend(cls, selected_backend: _Backend):
         """Get the default attention backend of a device."""
+        return None
+
+    @classmethod
+    def get_default_attn_backend_impl(cls) -> Optional[Callable]:
+        """Get the default attention backend implementation of a device."""
         return None
 
     @classmethod
