@@ -168,6 +168,15 @@ def _cached_get_attn_backend(
             PlaceholderAttentionBackend)
         return PlaceholderAttentionBackend
     else:
+        # If the backend is not specified, it may be a plugin platform. Use the
+        # default backend impl from it instead.
+        impl = current_platform.get_default_attn_backend_impl()
+        if impl:
+            assert callable(impl), (
+                "The default attention backend implementation is not callable, "
+                f"platform: {current_platform.device_name}")
+            return impl
+
         raise ValueError("Invalid attention backend.")
 
 
