@@ -479,8 +479,11 @@ class WorkerWrapperBase:
 
     def update_environment_variables(self, envs_list: List[Dict[str,
                                                                 str]]) -> None:
-        envs = envs_list[self.rank]
-        key = 'CUDA_VISIBLE_DEVICES'
+
+        # TODO (cmq): check if this occurs in gpu also? if so, fixme
+        envs = envs_list[self.rank][0]
+        from vllm.platforms import current_platform
+        key = current_platform.visible_device_name
         if key in envs and key in os.environ:
             # overwriting CUDA_VISIBLE_DEVICES is desired behavior
             # suppress the warning in `update_environment_variables`

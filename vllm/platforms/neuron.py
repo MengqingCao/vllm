@@ -17,6 +17,7 @@ class NeuronPlatform(Platform):
     device_name: str = "Neuron"
     device_type: str = "neuron"
     supported_quantization: list[str] = ["neuron_quant"]
+    ray_device_key: str = "neuron_cores"
 
     @classmethod
     def get_device_name(cls, device_id: int = 0) -> str:

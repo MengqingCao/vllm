@@ -131,8 +131,9 @@ class RayDistributedExecutor(DistributedExecutorBase):
         driver_ip = get_ip()
         rank = 0
         worker_initial_ranks = []
+        from vllm.platforms import current_platform
         for bundle_id, bundle in enumerate(placement_group.bundle_specs):
-            if not bundle.get(current_platform.device_name, 0):
+            if not bundle.get(current_platform.ray_device_key, 0):
                 continue
             scheduling_strategy = PlacementGroupSchedulingStrategy(
                 placement_group=placement_group,
@@ -140,12 +141,21 @@ class RayDistributedExecutor(DistributedExecutorBase):
                 placement_group_bundle_index=bundle_id,
             )
 
-            worker = ray.remote(
-                num_cpus=0,
-                num_gpus=num_gpus,
-                scheduling_strategy=scheduling_strategy,
-                **ray_remote_kwargs,
-            )(RayWorkerWrapper).remote(vllm_config=self.vllm_config, rank=rank)
+            if current_platform.is_cuda_alike():
+                worker = ray.remote(
+                    num_cpus=0,
+                    num_gpus=num_gpus,
+                    scheduling_strategy=scheduling_strategy,
+                    **ray_remote_kwargs,
+                )(RayWorkerWrapper).remote(vllm_config=self.vllm_config)
+            else:
+                worker = ray.remote(
+                    num_cpus=0,
+                    num_gpus=0,
+                    resources={current_platform.ray_device_key: num_gpus},
+                    scheduling_strategy=scheduling_strategy,
+                    **ray_remote_kwargs,
+                )(RayWorkerWrapper).remote(vllm_config=self.vllm_config)
             rank += 1
 
             if self.use_ray_spmd_worker:
@@ -172,6 +182,10 @@ class RayDistributedExecutor(DistributedExecutorBase):
                 "adjusting the Ray placement group or running the driver on a "
                 "GPU node.")
 
+        worker_ips = [
+            ray.get(worker.get_node_ip.remote())  # type: ignore[attr-defined]
+            for worker in self.workers
+        ]
         ip_counts: Dict[str, int] = {}
         for ip in worker_ips:
             ip_counts[ip] = ip_counts.get(ip, 0) + 1
@@ -212,7 +226,7 @@ class RayDistributedExecutor(DistributedExecutorBase):
                 # driver_dummy_worker can be None when using ray spmd worker.
                 continue
             worker_node_and_gpu_ids.append(
-                ray.get(worker.get_node_and_gpu_ids.remote()) \
+                ray.get(worker.get_node_and_accelerator_ids.remote()) \
             ) # type: ignore
 
         node_workers = defaultdict(list)  # node id -> list of worker ranks
@@ -245,7 +259,7 @@ class RayDistributedExecutor(DistributedExecutorBase):
 
         # Set environment variables for the driver and workers.
         all_args_to_update_environment_variables = [({
-            f"{current_platform.device_name}_VISIBLE_DEVICES":
+            f"{current_platform.visible_device_name}_VISIBLE_DEVICES":
             ",".join(map(str, node_gpus[node_id])),
             "VLLM_TRACE_FUNCTION":
             str(envs.VLLM_TRACE_FUNCTION),
@@ -493,6 +507,9 @@ class RayDistributedExecutor(DistributedExecutorBase):
             enable_asyncio=enable_asyncio,
             _overlap_gpu_communication=envs.
             VLLM_USE_RAY_COMPILED_DAG_OVERLAP_COMM)
+
+    def check_health(self) -> None:
+            logger.debug("Called check_health.")
 
     def __del__(self):
         self.shutdown()

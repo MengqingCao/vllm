@@ -85,6 +85,10 @@ class Platform:
     # the same behavior as PyTorch.
     torch_compile_backend: str = "inductor"
     supported_quantization: list[str] = []
+    # available ray device keys:
+    # https://github.com/ray-project/ray/blob/master/python/ray/_private/ray_constants.py#L441 # noqa
+    ray_device_key: str
+    visible_device_name: str
 
     def is_cuda(self) -> bool:
         return self._enum == PlatformEnum.CUDA

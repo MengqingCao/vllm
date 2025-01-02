@@ -77,6 +77,8 @@ class CudaPlatformBase(Platform):
     device_name: str = "GPU"
     device_type: str = "cuda"
     dispatch_key: str = "CUDA"
+    ray_device_key: str = "GPU"
+    visible_device_name: str = "CUDA"
 
     @classmethod
     def get_device_capability(cls,
