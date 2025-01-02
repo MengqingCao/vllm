@@ -16,7 +16,7 @@ logger = init_logger(__name__)
 
 class XPUPlatform(Platform):
     _enum = PlatformEnum.XPU
-    device_name: str = "xpu"
+    device_name: str = "GPU"
     device_type: str = "xpu"
     dispatch_key: str = "XPU"
 
@@ -78,6 +78,9 @@ class XPUPlatform(Platform):
             raise NotImplementedError(
                 "XPU does not support speculative decoding")
 
+        if vllm_config.device_config is not None:
+            assert vllm_config.device_config.device_type == "xpu"
+
         # check and update parallel config
         parallel_config = vllm_config.parallel_config
         if (parallel_config.distributed_executor_backend is not None
@@ -89,6 +92,20 @@ class XPUPlatform(Platform):
             parallel_config.distributed_executor_backend = "ray"
         if parallel_config.worker_cls == "auto":
             parallel_config.worker_cls = "vllm.worker.xpu_worker.XPUWorker"
+
+        if parallel_config.distributed_executor_backend == "mp":
+            # FIXME(kunshang):
+            # spawn needs calling `if __name__ == '__main__':``
+            # fork is not supported for xpu start new process.
+            logger.error(
+                "Both start methods (spawn and fork) have issue "
+                "on XPU if you use mp backend, Please try ray instead.")
+
+        from vllm.envs import envs
+        mp_method = envs.VLLM_WORKER_MULTIPROC_METHOD
+        if mp_method != "spawn" and parallel_config.world_size > 1:
+            raise RuntimeError(
+                "XPU multiprocess executor only support spawn as mp method")
 
     @classmethod
     def is_pin_memory_available(cls):
