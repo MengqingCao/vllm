@@ -100,7 +100,7 @@ class Attention(nn.Module):
         self.num_heads = num_heads
         self.head_size = head_size
         self.num_kv_heads = num_kv_heads
-        self.backend = backend_name_to_enum(attn_backend.get_name())
+        # self.backend = backend_name_to_enum(attn_backend.get_name())
 
         # For cuda-alike (CUDA and ROCM) and cpu platforms, we control how
         # torch.compile works by registering the attention as one giant
@@ -112,8 +112,9 @@ class Attention(nn.Module):
         # For some attention backends, we allocate an output tensor before
         # calling the custom op. When piecewise cudagraph is enabled, this
         # makes sure the output tensor is allocated inside the cudagraph.
-        self.use_output = self.backend == _Backend.FLASH_ATTN or \
-            self.backend == _Backend.FLASH_ATTN_VLLM_V1
+        # self.use_output = self.backend == _Backend.FLASH_ATTN or \
+        #     self.backend == _Backend.FLASH_ATTN_VLLM_V1
+        self.use_output = False
         compilation_config = get_current_vllm_config().compilation_config
         if prefix in compilation_config.static_forward_context:
             raise ValueError(f"Duplicate layer name: {prefix}")
