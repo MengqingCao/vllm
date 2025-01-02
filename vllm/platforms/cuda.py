@@ -81,6 +81,13 @@ class CudaPlatformBase(Platform):
     visible_device_name: str = "CUDA"
 
     @classmethod
+    def get_current_memory_usage(cls,
+                                 device: Optional[torch.types.Device] = None
+                                 ) -> float:
+        torch.cuda.reset_peak_memory_stats(device)
+        return torch.cuda.max_memory_allocated(device)
+
+    @classmethod
     def get_device_capability(cls,
                               device_id: int = 0
                               ) -> Optional[DeviceCapability]:

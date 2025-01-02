@@ -29,6 +29,13 @@ class XPUPlatform(Platform):
         logger.info("Using IPEX attention backend.")
         return "vllm.attention.backends.ipex_attn.IpexAttnBackend"
 
+    @classmethod
+    def get_current_memory_usage(cls,
+                                 device: Optional[torch.types.Device] = None
+                                 ) -> float:
+        torch.xpu.reset_peak_memory_stats(device)
+        return torch.xpu.max_memory_allocated(device)
+
     @staticmethod
     def get_device_capability(device_id: int = 0) -> DeviceCapability:
         major, minor, *_ = torch.xpu.get_device_capability(

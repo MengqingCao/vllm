@@ -126,6 +126,15 @@ class Platform:
         return ""
 
     @classmethod
+    def get_current_memory_usage(cls,
+                                 device: Optional[torch.types.Device] = None
+                                 ) -> float:
+        """
+        Return the memory usage in bytes.
+        """
+        raise NotImplementedError
+
+    @classmethod
     def get_device_capability(
         cls,
         device_id: int = 0,

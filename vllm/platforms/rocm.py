@@ -85,6 +85,13 @@ class RocmPlatform(Platform):
         return "vllm.attention.backends.rocm_flash_attn.ROCmFlashAttentionBackend"  # noqa: E501
 
     @classmethod
+    def get_current_memory_usage(cls,
+                                 device: Optional[torch.types.Device] = None
+                                 ) -> float:
+        torch.cuda.reset_peak_memory_stats(device)
+        return torch.cuda.max_memory_allocated(device)
+
+    @classmethod
     @lru_cache(maxsize=8)
     def get_device_capability(cls, device_id: int = 0) -> DeviceCapability:
         major, minor = torch.cuda.get_device_capability(device_id)
