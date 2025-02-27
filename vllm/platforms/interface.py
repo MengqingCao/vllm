@@ -12,7 +12,7 @@ import torch
 from vllm.logger import init_logger
 
 if TYPE_CHECKING:
-    from vllm.config import VllmConfig
+    from vllm.config import VllmConfig, get_current_vllm_config
     from vllm.utils import FlexibleArgumentParser
 else:
     VllmConfig = None
@@ -329,6 +329,18 @@ class Platform:
         Get device specific communicator class for distributed communication.
         """
         return "vllm.distributed.device_communicators.base_device_communicator.DeviceCommunicatorBase"  # noqa
+
+    @classmethod
+    def use_all_gather(cls) -> bool:
+        """
+        Whether to use allgather in LogitsProcessor to gather the logits.
+        """
+        import vllm.envs as envs
+
+        parallel_config = get_current_vllm_config().parallel_config
+        return (envs.VLLM_USE_V1
+                or parallel_config.distributed_executor_backend
+                == "external_launcher")
 
 
 class UnspecifiedPlatform(Platform):
