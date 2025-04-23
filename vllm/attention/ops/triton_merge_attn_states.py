@@ -2,8 +2,10 @@
 from typing import Optional
 
 import torch
-import triton
-import triton.language as tl
+
+from vllm.triton_utils import triton, tl
+
+from vllm.triton_utils import triton_jit_decorator
 
 
 # Implements section 2.2 of https://www.arxiv.org/pdf/2501.01005

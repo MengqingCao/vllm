@@ -3,10 +3,11 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-import triton
-import triton.language as tl
+
+from vllm.triton_utils import triton, tl
 
 from vllm.logger import init_logger
+from vllm.triton_utils import triton_jit_decorator
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.ops.topk_topp_sampler import apply_top_k_top_p
 from vllm.v1.spec_decode.metadata import SpecDecodeMetadata

@@ -30,10 +30,10 @@ It supports page size >= 1.
 
 import logging
 
-import triton
-import triton.language as tl
+from vllm.triton_utils import triton, tl
 
 from vllm.platforms import current_platform
+from vllm.triton_utils import triton_jit_decorator
 
 is_hip_ = current_platform.is_rocm()
 

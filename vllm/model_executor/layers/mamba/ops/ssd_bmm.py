@@ -8,8 +8,8 @@
 import math
 
 import torch
-import triton
-import triton.language as tl
+
+from vllm.triton_utils import triton, tl
 
 
 @triton.autotune(

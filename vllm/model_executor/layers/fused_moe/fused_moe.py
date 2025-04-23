@@ -6,9 +6,8 @@ import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
-import triton
-import triton.language as tl
 
+from vllm.triton_utils import triton, tl
 import vllm.envs as envs
 from vllm import _custom_ops as ops
 from vllm.logger import init_logger
@@ -21,6 +20,7 @@ from vllm.model_executor.layers.quantization.utils.fp8_utils import (
 from vllm.model_executor.layers.quantization.utils.int8_utils import (
     per_token_group_quant_int8, per_token_quant_int8)
 from vllm.platforms import current_platform
+from vllm.triton_utils import triton_jit_decorator
 from vllm.utils import direct_register_custom_op
 
 from .rocm_aiter_fused_moe import is_rocm_aiter_moe_enabled
