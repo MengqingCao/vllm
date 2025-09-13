@@ -357,6 +357,8 @@ class HybridAttentionMambaModelConfig(VerifyAndUpdateConfig):
         # get attention page size (for 1 token)
         attn_page_size_1_token = FullAttentionSpec(
             block_size=1,
+            physical_block_size=5,
+            logical_block_size=1,
             num_kv_heads=model_config.get_num_kv_heads(parallel_config),
             head_size=model_config.get_head_size(),
             dtype=kv_cache_dtype,
@@ -372,6 +374,8 @@ class HybridAttentionMambaModelConfig(VerifyAndUpdateConfig):
             shapes=model_cls.get_mamba_state_shape_from_config(vllm_config),
             dtypes=model_cls.get_mamba_state_dtype_from_config(vllm_config),
             block_size=model_config.max_model_len,
+            physical_block_size=model_config.max_model_len,
+            logical_block_size=model_config.max_model_len,
         ).page_size_bytes
 
         # Attention backend constraints:
@@ -383,13 +387,14 @@ class HybridAttentionMambaModelConfig(VerifyAndUpdateConfig):
             use_cutlass_mla = (envs.VLLM_ATTENTION_BACKEND == "CUTLASS_MLA")
             block_alignment_bytes = 128 if use_cutlass_mla else 64
         else:
-            block_alignment_bytes = 16
+            block_alignment_bytes = 64
 
         # Calculate minimum attention block size that satisfies both:
         # 1. Backend alignment requirements (block_alignment_bytes)
         # 2. Mamba page size compatibility (attn_page_size >= mamba_page_size)
         attn_block_size = block_alignment_bytes * cdiv(
             mamba_page_size, block_alignment_bytes * attn_page_size_1_token)
+        print(60*"+", f"attn_page_size_1_token: {attn_page_size_1_token} mamba_page_size: {mamba_page_size} attn_block_size: {attn_block_size}")
 
         # override attention block size if either (a) the
         # user has not set it or (b) the user has set it

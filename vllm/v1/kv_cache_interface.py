@@ -24,6 +24,8 @@ class KVCacheSpec:
     """
 
     # number of tokens in a block
+    physical_block_size: int
+    logical_block_size: int
     block_size: int
 
     @property
@@ -66,7 +68,7 @@ class AttentionSpec(KVCacheSpec):
     def page_size_bytes(self) -> int:
         # For MLA we only store a single latent vector
         coef = 1 if self.use_mla else 2
-        return coef * self.block_size * self.num_kv_heads * self.head_size \
+        return coef * self.physical_block_size * self.num_kv_heads * self.head_size \
                 * get_dtype_size(self.dtype)
 
 
@@ -92,7 +94,7 @@ class FullAttentionSpec(AttentionSpec):
         # (max_model_len//dcp_world_size) tokens locally.
         if dcp_world_size > 1:
             max_model_len = cdiv(max_model_len, dcp_world_size)
-        return cdiv(max_model_len, self.block_size) * self.page_size_bytes
+        return cdiv(max_model_len, self.physical_block_size) * self.page_size_bytes
 
     @classmethod
     def merge_window_sizes(cls, window_sizes: set[int]) -> Optional[int]:
@@ -121,6 +123,8 @@ class FullAttentionSpec(AttentionSpec):
                                    if spec.attention_chunk_size is not None)
         merged_spec = cls(
             block_size=specs[0].block_size,
+            physical_block_size=specs[0].physical_block_size,
+            logical_block_size=specs[0].logical_block_size,
             num_kv_heads=specs[0].num_kv_heads,
             head_size=specs[0].head_size,
             dtype=specs[0].dtype,
