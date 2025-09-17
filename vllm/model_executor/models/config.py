@@ -383,7 +383,7 @@ class HybridAttentionMambaModelConfig(VerifyAndUpdateConfig):
             use_cutlass_mla = (envs.VLLM_ATTENTION_BACKEND == "CUTLASS_MLA")
             block_alignment_bytes = 128 if use_cutlass_mla else 64
         else:
-            block_alignment_bytes = 16
+            block_alignment_bytes = 64
 
         # Calculate minimum attention block size that satisfies both:
         # 1. Backend alignment requirements (block_alignment_bytes)
