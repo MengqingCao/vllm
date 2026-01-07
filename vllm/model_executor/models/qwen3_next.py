@@ -30,7 +30,6 @@ from vllm.distributed import (
 )
 from vllm.forward_context import ForwardContext, get_forward_context
 from vllm.logger import init_logger
-from vllm.model_executor.custom_op import CustomTritonOp
 from vllm.model_executor.layers.fla.ops import (
     ChunkGatedDeltaRule,
     FusedRecurrentGatedDeltaRule,
@@ -70,6 +69,7 @@ from vllm.model_executor.model_loader.weight_utils import (
 )
 from vllm.model_executor.models.qwen2_moe import Qwen2MoeMLP as Qwen3NextMLP
 from vllm.model_executor.models.utils import sequence_parallel_chunk
+from vllm.model_executor.triton_op import TritonOpBase
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
 from vllm.sequence import IntermediateTensors
@@ -1406,7 +1406,7 @@ def fused_gdn_gating(
     return g, beta_output
 
 
-@CustomTritonOp.register("fused_gdn_gating")
-class FusedGDNGating(CustomTritonOp):
+@TritonOpBase.register("fused_gdn_gating")
+class FusedGDNGating(TritonOpBase):
     def forward_cuda(self, *args, **kwargs):
         return fused_gdn_gating(*args, **kwargs)
