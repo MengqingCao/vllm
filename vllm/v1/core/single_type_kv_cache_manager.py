@@ -1106,20 +1106,76 @@ class SinkFullAttentionManager(FullAttentionManager):
         self.sink_blocks = self.block_pool.free_block_queue.popleft_n(num_sink_block)
 
 
-spec_manager_map: dict[type[KVCacheSpec], type[SingleTypeKVCacheManager]] = {
-    FullAttentionSpec: FullAttentionManager,
-    MLAAttentionSpec: FullAttentionManager,
-    SlidingWindowSpec: SlidingWindowManager,
-    ChunkedLocalAttentionSpec: ChunkedLocalAttentionManager,
-    MambaSpec: MambaManager,
-    CrossAttentionSpec: CrossAttentionManager,
-    SinkFullAttentionSpec: SinkFullAttentionManager,
-}
+# NOTE: This map is deprecated and kept only for reference.
+# Manager selection now uses KVCacheSpecRegistry.get_manager_class().
+# See get_manager_for_kv_cache_spec() below.
+# spec_manager_map: dict[type[KVCacheSpec], type[SingleTypeKVCacheManager]] = {
+#     FullAttentionSpec: FullAttentionManager,
+#     MLAAttentionSpec: FullAttentionManager,
+#     SlidingWindowSpec: SlidingWindowManager,
+#     ChunkedLocalAttentionSpec: ChunkedLocalAttentionManager,
+#     MambaSpec: MambaManager,
+#     CrossAttentionSpec: CrossAttentionManager,
+#     SinkFullAttentionSpec: SinkFullAttentionManager,
+# }
 
 
 def get_manager_for_kv_cache_spec(
     kv_cache_spec: KVCacheSpec, **kwargs
 ) -> SingleTypeKVCacheManager:
-    manager_class = spec_manager_map[type(kv_cache_spec)]
+    """
+    Get the appropriate manager for a given KVCacheSpec.
+
+    Uses the KVCacheSpecRegistry to look up the manager class, supporting
+    both built-in and custom specs registered via @register_kv_cache_spec.
+
+    Args:
+        kv_cache_spec: The KVCacheSpec instance
+        **kwargs: Additional arguments to pass to the manager constructor
+
+    Returns:
+        An instance of the appropriate SingleTypeKVCacheManager subclass
+
+    Raises:
+        ValueError: If no manager is registered for this spec type
+    """
+    manager_class = KVCacheSpecRegistry.get_manager_class(kv_cache_spec)
     manager = manager_class(kv_cache_spec, **kwargs)
     return manager
+
+
+# ---------------------------------------------------------------------------
+# Built-in spec registration
+#
+# Registration is placed here — at the bottom of the file where all manager
+# classes are already fully defined — to avoid a circular import that would
+# occur if registration were triggered from kv_cache_interface.py:
+#
+#   kv_cache_interface.py → single_type_kv_cache_manager.py
+#     → block_pool.py → kv_events.py → kv_cache_utils.py
+#       → kv_cache_interface.py  (partially initialised → ImportError)
+#
+# By registering here, kv_cache_interface.py never needs to import this
+# module at module-load time, breaking the cycle entirely.
+# ---------------------------------------------------------------------------
+from vllm.v1.kv_cache_registry import KVCacheSpecRegistry  # noqa: E402
+
+# Base specs — each is its own grouping base class
+KVCacheSpecRegistry.register(FullAttentionSpec, FullAttentionManager,
+                              grouping_base_class=FullAttentionSpec)
+KVCacheSpecRegistry.register(SlidingWindowSpec, SlidingWindowManager,
+                              grouping_base_class=SlidingWindowSpec)
+KVCacheSpecRegistry.register(MambaSpec, MambaManager,
+                              grouping_base_class=MambaSpec)
+KVCacheSpecRegistry.register(ChunkedLocalAttentionSpec,
+                              ChunkedLocalAttentionManager,
+                              grouping_base_class=ChunkedLocalAttentionSpec)
+KVCacheSpecRegistry.register(CrossAttentionSpec, CrossAttentionManager,
+                              grouping_base_class=CrossAttentionSpec)
+
+# FullAttentionSpec subclasses — grouped with FullAttentionSpec
+KVCacheSpecRegistry.register(MLAAttentionSpec, FullAttentionManager,
+                              grouping_base_class=FullAttentionSpec)
+KVCacheSpecRegistry.register(SinkFullAttentionSpec, SinkFullAttentionManager,
+                              grouping_base_class=FullAttentionSpec)
+
