@@ -16,7 +16,8 @@ from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.worker.gpu.attn_utils import (
     build_attn_metadata,
     build_slot_mappings_by_layer,
-    init_attn_backend,
+    create_attn_groups,
+    get_attention_cg_support_info,
 )
 from vllm.v1.worker.gpu.block_table import BlockTables
 from vllm.v1.worker.gpu.cudagraph_utils import (
@@ -172,11 +173,18 @@ class EagleSpeculator:
     ) -> None:
         self.model_state = model_state
         self.kv_cache_config = kv_cache_config
-        _, self.attn_groups, _ = init_attn_backend(
+        self.attn_groups = create_attn_groups(
             kv_cache_config,
             self.vllm_config,
-            self.device,
             active_layer_names=self.draft_attn_layer_names,
+        )
+        # NOTE(cmq): get_attention_cg_support_info just to trigger the
+        # intialization of attention metadata builder
+        get_attention_cg_support_info(
+            self.attn_groups,
+            self.vllm_config,
+            self.device,
+            block_tables.kernel_block_sizes,
         )
         self.block_tables = block_tables
 
