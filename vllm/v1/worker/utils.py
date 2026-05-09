@@ -285,6 +285,7 @@ def select_common_block_size(
         """Check if the block size is supported by all backends."""
         for backend in backends:
             is_supported = False
+            print(f"{backend.get_supported_kernel_block_sizes()=}")
             for supported_size in backend.get_supported_kernel_block_sizes():
                 if isinstance(supported_size, int):
                     if block_size == supported_size:
@@ -317,11 +318,15 @@ def select_common_block_size(
         for supported_size in backend.get_supported_kernel_block_sizes()
         if isinstance(supported_size, int)
     )
+    print(100*"$")
+    print(f"{all_int_supported_sizes=}")
+    print(f"{backends=}")
 
     for supported_size in sorted(all_int_supported_sizes, reverse=True):
         if kv_manager_block_size % supported_size != 0:
             continue
         if block_size_is_supported(backends, supported_size):
+            print(f"{supported_size=}")
             return supported_size
     raise ValueError(f"No common block size for {kv_manager_block_size}. ")
 

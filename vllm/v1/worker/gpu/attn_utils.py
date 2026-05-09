@@ -182,6 +182,12 @@ def _reshape_kv_cache(
                     kv_cache_spec.head_size,
                     cache_dtype_str=cache_dtype,
                 )
+                print(100*"!")
+                print(f"{kv_cache_spec.block_size=}")
+                print(f"{kernel_block_size=}")
+                print(f"{num_blocks_per_kv_block=}")
+                print(f"{kernel_num_blocks=}")
+                print(f"{num_blocks=}")
 
                 # FIXME(woosuk): Add kv_cache_stride_order to all attention backends.
                 try:

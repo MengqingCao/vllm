@@ -401,6 +401,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.device,
             self.kernel_block_sizes,
         )
+        print(100*"%")
+        print(f"{self.attn_groups=}")
         initialize_mamba_ssu_backend(
             self.vllm_config.mamba_config, self.kv_cache_config
         )

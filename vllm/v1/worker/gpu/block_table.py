@@ -63,6 +63,11 @@ class BlockTables:
             )
             self.block_tables.append(block_table)
 
+
+        print(f"{self.blocks_per_kv_block=}")
+        print(f"{self.block_sizes=}")
+        print(f"{self.kernel_block_sizes=}")
+        print(f"{max_num_blocks_per_group=}")
         self.max_num_blocks_per_group = torch.tensor(
             [b.gpu.shape[1] for b in self.block_tables],
             dtype=torch.int32,
@@ -124,6 +129,9 @@ class BlockTables:
             block_ids = self._map_to_kernel_blocks(i, new_block_ids[i])
             self.block_tables[i].stage_write(req_index, start, block_ids)
             self.num_blocks.np[i, req_index] = start + len(block_ids)
+            print(f"Group {i}, Request {req_index}: Appended block IDs {new_block_ids[i]}")
+            print(f"{self.block_tables[i]=}")
+            print(f"{block_ids=}")
 
     def _map_to_kernel_blocks(
         self,
