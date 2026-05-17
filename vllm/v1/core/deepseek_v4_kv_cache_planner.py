@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -12,7 +13,7 @@ import torch
 
 from vllm.config import VllmConfig
 from vllm.model_executor.layers.deepseek_compressor import CompressorBackend
-from vllm.utils.math_utils import round_up
+from vllm.utils.math_utils import cdiv, round_up
 from vllm.utils.torch_utils import get_dtype_size
 from vllm.v1.attention.backend import MultipleOf
 from vllm.v1.attention.backends.mla.flashmla_sparse import (
@@ -20,9 +21,11 @@ from vllm.v1.attention.backends.mla.flashmla_sparse import (
 )
 from vllm.v1.attention.backends.mla.sparse_swa import DeepseekSparseSWABackend
 from vllm.v1.kv_cache_interface import (
+    KVCacheGroupSpec,
     KVCacheSpec,
     MLAAttentionSpec,
     SlidingWindowMLASpec,
+    UniformTypeKVCacheSpecs,
 )
 
 _DEEPSEEK_V4_ALIGNMENT = 576
@@ -60,6 +63,30 @@ class DeepseekV4CanonicalBuckets:
 
 
 SupportedBlockSizes = Sequence[int | MultipleOf]
+
+
+def _approximate_gcd(values: Sequence[int], *, lower_bound: int | None = None) -> int:
+    """Pick a chunk size that minimizes total upward padding."""
+
+    if not values:
+        raise ValueError("values must be non-empty")
+    if any(x <= 0 for x in values):
+        raise ValueError(f"values must be positive, got: {list(values)!r}")
+
+    min_d = max(1, lower_bound if lower_bound is not None else 1)
+    max_d = max(values)
+    if min_d > max_d:
+        return min_d
+
+    best_d = min_d
+    best_pad: int | None = None
+    for d in range(min_d, max_d + 1):
+        pad = sum((d - (x % d)) % d for x in values)
+        if best_pad is None or pad < best_pad or (pad == best_pad and d > best_d):
+            best_pad = pad
+            best_d = d
+
+    return best_d
 
 
 def _supports_block_size(
@@ -155,17 +182,18 @@ def infer_block_size_against_buckets(
 
 
 class DeepseekV4KVCachePlanner:
-    """Finalize DeepSeek V4 KV cache layouts before generic grouping.
+    """Plan DeepSeek V4 KV cache layouts and groups.
 
     DeepSeek V4 has several auxiliary caches whose natural page sizes differ
     from the main MLA cache. This planner assigns compatible block sizes and
-    padded page sizes so the generic KV cache grouping logic can place all
-    related layers into canonical page-size buckets.
+    padded page sizes, then builds KV cache groups around canonical page-size
+    buckets shared by the main MLA layers.
     """
 
     def __init__(self, vllm_config: VllmConfig):
         """Create a planner bound to the engine cache configuration."""
 
+        self.vllm_config = vllm_config
         # main_block_size refers to the block_size of MLAAttentionSpec
         self.main_block_size = vllm_config.cache_config.block_size
         self.supported_compress_ratios = (
@@ -184,6 +212,16 @@ class DeepseekV4KVCachePlanner:
             kv_cache_spec, spec_infos, canonical_buckets, inferred_layouts
         )
         return finalized
+
+    def get_kv_cache_groups(
+        self, kv_cache_specs: dict[str, KVCacheSpec]
+    ) -> list[KVCacheGroupSpec]:
+        """Build DeepSeek V4 KV cache groups from finalized specs."""
+
+        grouped_specs = self._group_and_unify_specs(kv_cache_specs)
+        kv_cache_groups = self._get_kv_cache_groups_from_uniform_groups(grouped_specs)
+        self._annotate_eagle_groups(kv_cache_specs, kv_cache_groups)
+        return kv_cache_groups
 
     def _classify_specs(
         self, kv_cache_specs: dict[str, KVCacheSpec]
@@ -342,7 +380,7 @@ class DeepseekV4KVCachePlanner:
                     # introduced by kv cache grouping, which causes more number of groups
                     # and thus more padding.
                     candidate_key = (
-                        lambda block_size, bucket: (
+                        lambda block_size, bucket, _: (
                             -block_size,
                             bucket,
                         )
@@ -404,3 +442,127 @@ class DeepseekV4KVCachePlanner:
             print(f"  {layer_name}: {spec}")
 
         return res
+
+    def _group_and_unify_specs(
+        self, kv_cache_specs: dict[str, KVCacheSpec]
+    ) -> list[UniformTypeKVCacheSpecs]:
+        """Group finalized DeepSeek V4 specs into uniform-type spec groups."""
+
+        mla_specs: dict[str, KVCacheSpec] = {}
+        grouped_swa_mla_specs: dict[tuple[int, int], dict[str, KVCacheSpec]] = (
+            defaultdict(dict)
+        )
+        # Group SWA layers by (block_size, sliding_window), separating SWA,
+        # C4I+C4A, and C128A layers.
+        for name, spec in kv_cache_specs.items():
+            if isinstance(spec, SlidingWindowMLASpec):
+                grouped_swa_mla_specs[(spec.block_size, spec.sliding_window)][name] = (
+                    spec
+                )
+            elif isinstance(spec, MLAAttentionSpec):
+                mla_specs[name] = spec
+
+        assert len(mla_specs) > 0
+        mla_uniform_spec = UniformTypeKVCacheSpecs.from_specs(mla_specs)
+        assert mla_uniform_spec is not None
+
+        swa_uniform_specs: list[UniformTypeKVCacheSpecs] = []
+        for spec_dict in grouped_swa_mla_specs.values():
+            uniform_spec = UniformTypeKVCacheSpecs.from_specs(spec_dict)
+            assert uniform_spec is not None
+            swa_uniform_specs.append(uniform_spec)
+
+        return [mla_uniform_spec, *swa_uniform_specs]
+
+    def _get_kv_cache_groups_from_uniform_groups(
+        self, grouped_specs: list[UniformTypeKVCacheSpecs]
+    ) -> list[KVCacheGroupSpec]:
+        """Generate DeepSeek V4 KV cache groups from uniform-type specs."""
+
+        assert len(grouped_specs) > 0 and all(
+            isinstance(spec, UniformTypeKVCacheSpecs) for spec in grouped_specs
+        )
+        # The first group is the full MLA group whose page sizes define the
+        # canonical buckets for the auxiliary cache groups.
+        full_mla_spec = grouped_specs[0]
+        assert all(
+            isinstance(spec, MLAAttentionSpec)
+            for spec in full_mla_spec.kv_cache_specs.values()
+        )
+        full_mla_group = KVCacheGroupSpec(
+            layer_names=list(full_mla_spec.kv_cache_specs.keys()),
+            kv_cache_spec=full_mla_spec,
+        )
+
+        num_layer_tuples_per_group: list[int] = [
+            g_spec.get_num_layer_tuples() for g_spec in grouped_specs
+        ]
+        num_layer_tuples = _approximate_gcd(
+            num_layer_tuples_per_group,
+            lower_bound=num_layer_tuples_per_group[0],
+        )
+
+        swa_mla_specs = grouped_specs[1:]
+        assert all(
+            isinstance(spec, SlidingWindowMLASpec)
+            for group in swa_mla_specs
+            for spec in group.kv_cache_specs.values()
+        )
+
+        all_page_sizes = full_mla_spec.get_page_sizes()
+        swa_mla_groups = []
+        for sm_spec in swa_mla_specs:
+            sm_page_sizes = sm_spec.get_page_sizes()
+            layers_per_size: dict[int, list[str]] = defaultdict(list)
+            assert max(sm_page_sizes) <= max(all_page_sizes)
+
+            for layer_name, layer_spec in sm_spec.kv_cache_specs.items():
+                current_size = layer_spec.page_size_bytes
+                assert current_size in all_page_sizes, (
+                    f"DeepSeek V4 KV cache layer {layer_name} has page_size "
+                    f"{current_size}, which is not in canonical MLA buckets "
+                    f"{all_page_sizes}."
+                )
+                layers_per_size[current_size].append(layer_name)
+
+            assert len(set(len(layers) for layers in layers_per_size.values())) == 1
+            num_layers_per_size = len(next(iter(layers_per_size.values())))
+
+            num_tuple_groups = cdiv(num_layers_per_size, num_layer_tuples)
+            layer_tuples = list(zip(*layers_per_size.values()))
+            for i in range(num_tuple_groups):
+                group_layer_tuples = layer_tuples[i::num_tuple_groups]
+                group_layer_names = [
+                    name for layer_tuple in group_layer_tuples for name in layer_tuple
+                ]
+                group_layer_specs = {
+                    name: sm_spec.kv_cache_specs[name] for name in group_layer_names
+                }
+                sub_sm_spec = UniformTypeKVCacheSpecs.from_specs(group_layer_specs)
+                assert sub_sm_spec is not None
+                swa_mla_groups.append(
+                    KVCacheGroupSpec(
+                        layer_names=group_layer_names,
+                        kv_cache_spec=sub_sm_spec,
+                    )
+                )
+
+        return [full_mla_group, *swa_mla_groups]
+
+    def _annotate_eagle_groups(
+        self,
+        kv_cache_specs: dict[str, KVCacheSpec],
+        kv_cache_groups: list[KVCacheGroupSpec],
+    ) -> None:
+        """Mark the DeepSeek V4 EAGLE/MTP group when speculative decoding uses it."""
+
+        spec_config = self.vllm_config.speculative_config
+        if spec_config is None or not spec_config.use_eagle():
+            return
+        # DeepSeek V4's MTP attention layer is always the last layer.
+        # FIXME(yifan): avoid/generalize this hacky check.
+        last_layer = next(reversed(kv_cache_specs))
+        for group in kv_cache_groups:
+            if last_layer in group.layer_names:
+                group.is_eagle_group = True
+                break
