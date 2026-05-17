@@ -72,7 +72,8 @@ class DeepseekV4SWACache(torch.nn.Module, AttentionLayerBase):
         # same page size. The C4A KV block shape [256//4, head_dim] = [64, head_dim]
         # determines the SWA block size of 64 tokens per block.
         # TODO(yifan): make SWA block size automatically determined and configurable.
-        self.block_size = 64
+        cache_config = get_current_vllm_config().cache_config
+        self.block_size = cache_config.block_size
         assert self.dtype == torch.uint8
 
     def get_kv_cache_spec(self, vllm_config: VllmConfig) -> KVCacheSpec:

@@ -302,6 +302,10 @@ def _apply_alignment_padding(spec: MLAAttentionSpec | SlidingWindowMLASpec):
     if spec.alignment is None:
         return
     actual_page_size = spec.real_page_size_bytes
+    if spec.page_size_padded is not None:
+        assert spec.page_size_padded >= actual_page_size
+        assert spec.page_size_padded % spec.alignment == 0
+        return
     padded_page_size = round_up(actual_page_size, spec.alignment)
     if padded_page_size != actual_page_size:
         object.__setattr__(spec, "page_size_padded", padded_page_size)

@@ -135,6 +135,7 @@ class CompressorStateCache(torch.nn.Module, AttentionLayerBase):
         if prefix in compilation_config.static_forward_context:
             raise ValueError(f"Duplicate layer name: {prefix}")
         compilation_config.static_forward_context[prefix] = self
+        cache_config = get_current_vllm_config().cache_config
 
         assert self.dtype == torch.float32
         assert compress_ratio in [4, 128]
@@ -147,12 +148,13 @@ class CompressorStateCache(torch.nn.Module, AttentionLayerBase):
         # - C4 compressor block shape [4, 2*512*2*4] -> block_size = 4
         # - C128 compressor block shape [8, 512*2*4] -> block_size = 8
         # TODO(yifan): make block size automatically determined and configurable.
-        if compress_ratio == 4:
-            self.block_size = 4
-        elif compress_ratio == 128:
-            self.block_size = 8
-        else:
-            raise ValueError(f"Invalid compress ratio: {compress_ratio}")
+        self.block_size: int = cache_config.block_size
+        # if compress_ratio == 4:
+        #     self.block_size = 4
+        # elif compress_ratio == 128:
+        #     self.block_size = 8
+        # else:
+        #     raise ValueError(f"Invalid compress ratio: {compress_ratio}")
 
     def get_kv_cache_spec(self, vllm_config: VllmConfig) -> KVCacheSpec:
         return SlidingWindowMLASpec(  # only has one vector instead of K + V
