@@ -14,7 +14,7 @@ import torch
 from typing_extensions import Self
 
 from vllm.logger import init_logger
-from vllm.utils.math_utils import cdiv, round_up
+from vllm.utils.math_utils import cdiv
 from vllm.utils.torch_utils import get_dtype_size, nvfp4_kv_cache_full_dim
 from vllm.v1.attention.backends.registry import MambaAttentionBackendEnum
 
@@ -298,19 +298,6 @@ class FullAttentionSpec(AttentionSpec):
         )
 
 
-def _apply_alignment_padding(spec: MLAAttentionSpec | SlidingWindowMLASpec):
-    if spec.alignment is None:
-        return
-    actual_page_size = spec.real_page_size_bytes
-    if spec.page_size_padded is not None:
-        assert spec.page_size_padded >= actual_page_size
-        assert spec.page_size_padded % spec.alignment == 0
-        return
-    padded_page_size = round_up(actual_page_size, spec.alignment)
-    if padded_page_size != actual_page_size:
-        object.__setattr__(spec, "page_size_padded", padded_page_size)
-
-
 @dataclass(frozen=True, kw_only=True)
 class TQFullAttentionSpec(FullAttentionSpec):
     """FullAttentionSpec with TQ-aware page size.
@@ -348,7 +335,6 @@ class MLAAttentionSpec(FullAttentionSpec):
 
     def __post_init__(self):
         super().__post_init__()
-        _apply_alignment_padding(self)
 
     @property
     def storage_block_size(self) -> int:
@@ -507,9 +493,6 @@ class SlidingWindowMLASpec(SlidingWindowSpec):
     alignment: int | None = None  # Default to None for no padding.
     compress_ratio: int = 1
     model_version: str | None = None
-
-    def __post_init__(self):
-        _apply_alignment_padding(self)
 
     @property
     def storage_block_size(self) -> int:
