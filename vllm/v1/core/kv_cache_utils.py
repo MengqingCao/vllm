@@ -1548,18 +1548,15 @@ def _get_kv_cache_groups_uniform_groups(
         layers_per_size: dict[int, list[str]] = defaultdict(list)
         assert max(sm_page_sizes) <= max(all_page_sizes)
 
-        # Unify page size by padding layers' page_size to the nearest larger page_size.
-        # Compute candidate (nearest larger page_size) for each unique page size.
-        size_to_candidate: dict[int, int] = {}
-        for ps in sm_page_sizes:
-            size_to_candidate[ps] = min(x for x in all_page_sizes if x >= ps)
-        # Pad and collect layer names per page size.
+        # Planner has already padded SWA-shaped pages to canonical MLA buckets.
         for layer_name, layer_spec in sm_spec.kv_cache_specs.items():
             current_size = layer_spec.page_size_bytes
-            candidate = size_to_candidate[current_size]
-            if current_size < candidate:
-                object.__setattr__(layer_spec, "page_size_padded", candidate)
-            layers_per_size[candidate].append(layer_name)
+            assert current_size in all_page_sizes, (
+                f"DeepSeek V4 KV cache layer {layer_name} has page_size "
+                f"{current_size}, which is not in canonical MLA buckets "
+                f"{all_page_sizes}."
+            )
+            layers_per_size[current_size].append(layer_name)
         # NOTE(yifan): for now, inside a UniformKV group, each page_size should
         # have the same number of layers. This also means we don't need to pad layers
         # inside a partial-full layer tuple.
@@ -1628,6 +1625,11 @@ def get_kv_cache_groups(
     Returns:
         The generated KVCacheGroups
     """
+    from vllm.v1.core.deepseek_v4_kv_cache_planner import DeepseekV4KVCachePlanner
+
+    if vllm_config.model_config.hf_config.model_type == "deepseek_v4":
+        kv_cache_spec = DeepseekV4KVCachePlanner(vllm_config).plan(kv_cache_spec)
+
     if vllm_config.scheduler_config.disable_hybrid_kv_cache_manager:
         unify_hybrid_kv_cache_specs(kv_cache_spec)
 

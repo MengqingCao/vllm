@@ -276,6 +276,8 @@ class EngineCore:
             vllm_config.cache_config.block_size = min(
                 g.kv_cache_spec.block_size for g in kv_cache_groups
             )
+            print(60*"-")
+            print(f"{kv_cache_configs=}")
 
         vllm_config.validate_block_size()
 
