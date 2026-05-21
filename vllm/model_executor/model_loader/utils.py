@@ -58,6 +58,7 @@ def initialize_model(
     if "vllm_config" in all_params and "prefix" in all_params:
         # new-style model class
         with set_current_vllm_config(vllm_config, check_compile=True, prefix=prefix):
+            # NOTE(Mengqing): model is initialized here.
             model = model_class(vllm_config=vllm_config, prefix=prefix)
             record_metadata_for_reloading(model)
             return model
