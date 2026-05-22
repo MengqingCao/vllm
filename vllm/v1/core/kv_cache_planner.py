@@ -52,7 +52,7 @@ class KVCachePlanner(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_kv_cache_groups_for_specs(
+    def get_kv_cache_groups(
         self, kv_cache_specs: dict[str, KVCacheSpec]
     ) -> list[KVCacheGroupSpec]:
         """Return planned KV cache groups for one worker spec map.
@@ -78,7 +78,7 @@ class KVCachePlanner(ABC):
     ) -> KVCacheConfig:
         """Return one KV cache config from already-planned groups.
 
-        This entry point is paired with ``get_kv_cache_groups_for_specs`` for
+        This entry point is paired with ``get_kv_cache_groups`` for
         profiling/minimal-cache initialization. It must use the same tensor
         layout rules as the final configs produced by ``get_kv_cache_configs``.
 

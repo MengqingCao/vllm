@@ -260,8 +260,9 @@ class DeepseekV4KVCachePlanner(KVCachePlanner):
     ) -> list[KVCacheGroupSpec]:
         """Finalize and group one DeepSeek V4 KV cache spec map."""
 
-        self._finalize_specs = self._post_process_kv_cache_specs(kv_cache_specs)
+        _finalize_specs = self._post_process_kv_cache_specs(kv_cache_specs)
         return self._get_kv_cache_groups(
+            _finalize_specs
         )
 
     def get_kv_cache_config_from_groups(

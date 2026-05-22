@@ -6158,7 +6158,7 @@ class GPUModelRunner(
         if kv_cache_planner_cls_path is not None:
             kv_cache_planner_cls = resolve_obj_by_qualname(kv_cache_planner_cls_path)
             kv_cache_planner = kv_cache_planner_cls(self.vllm_config)
-            kv_cache_groups = kv_cache_planner.get_kv_cache_groups_for_specs(
+            kv_cache_groups = kv_cache_planner.get_kv_cache_groups(
                 kv_cache_spec
             )
         else:
