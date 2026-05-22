@@ -12,8 +12,10 @@ from enum import Enum
 import torch
 
 from vllm.config import VllmConfig
-from vllm.model_executor.layers.deepseek_compressor import CompressorBackend
+from vllm.logger import init_logger
+from vllm.models.deepseek_v4.compressor import CompressorBackend
 from vllm.utils.math_utils import cdiv, round_up
+from vllm.utils.mem_utils import format_gib
 from vllm.utils.torch_utils import get_dtype_size
 from vllm.v1.attention.backend import MultipleOf
 from vllm.v1.attention.backends.mla.flashmla_sparse import (
@@ -22,14 +24,19 @@ from vllm.v1.attention.backends.mla.flashmla_sparse import (
 from vllm.v1.attention.backends.mla.sparse_swa import DeepseekSparseSWABackend
 from vllm.v1.kv_cache_interface import (
     KVCacheGroupSpec,
+    KVCacheConfig,
     KVCacheSpec,
+    KVCacheTensor,
     MLAAttentionSpec,
     SlidingWindowMLASpec,
     UniformTypeKVCacheSpecs,
 )
+from vllm.v1.core.kv_cache_planner import KVCachePlanner
 
 _DEEPSEEK_V4_ALIGNMENT = 576
 _DEEPSEEK_V4_KV_BYTES_PER_TOKEN = 584
+
+logger = init_logger(__name__)
 
 
 class DeepseekV4CacheType(str, Enum):
@@ -62,7 +69,7 @@ class DeepseekV4CanonicalBuckets:
     page_size_by_layer: dict[str, int]
 
 
-SupportedBlockSizes = Sequence[int | MultipleOf]
+_SupportedBlockSizes = Sequence[int | MultipleOf]
 
 
 def _approximate_gcd(values: Sequence[int], *, lower_bound: int | None = None) -> int:
@@ -90,7 +97,7 @@ def _approximate_gcd(values: Sequence[int], *, lower_bound: int | None = None) -
 
 
 def _supports_block_size(
-    block_size: int, supported_block_sizes: SupportedBlockSizes
+    block_size: int, supported_block_sizes: _SupportedBlockSizes
 ) -> bool:
     """Return whether a concrete block size satisfies backend constraints."""
 
@@ -102,7 +109,7 @@ def _supports_block_size(
     )
 
 
-def _format_supported_block_sizes(supported_block_sizes: SupportedBlockSizes) -> str:
+def _format_supported_block_sizes(supported_block_sizes: _SupportedBlockSizes) -> str:
     """Format backend block-size constraints for error messages."""
 
     return repr(
@@ -123,12 +130,12 @@ def _aligned_page_size(page_size: int, alignment: int | None) -> int:
     return round_up(page_size, alignment)
 
 
-def infer_block_size_against_buckets(
+def _infer_block_size_against_buckets(
     *,
     bytes_per_token: int,
     canonical_page_sizes: Sequence[int],
     alignment: int | None,
-    supported_block_sizes: SupportedBlockSizes,
+    supported_block_sizes: _SupportedBlockSizes,
     extra_constraints: Sequence[Callable[[int], bool]] = (),
     candidate_key: Callable[[int, int, int], tuple[int, int]] | None = None,
 ) -> tuple[int, int]:
@@ -181,7 +188,7 @@ def infer_block_size_against_buckets(
     return block_size, bucket
 
 
-class DeepseekV4KVCachePlanner:
+class DeepseekV4KVCachePlanner(KVCachePlanner):
     """Plan DeepSeek V4 KV cache layouts and groups.
 
     DeepSeek V4 has several auxiliary caches whose natural page sizes differ
@@ -193,14 +200,49 @@ class DeepseekV4KVCachePlanner:
     def __init__(self, vllm_config: VllmConfig):
         """Create a planner bound to the engine cache configuration."""
 
-        self.vllm_config = vllm_config
+        super().__init__(vllm_config)
         # main_block_size refers to the block_size of MLAAttentionSpec
         self.main_block_size = vllm_config.cache_config.block_size
         self.supported_compress_ratios = (
             set(vllm_config.model_config.hf_config.compress_ratios) | {1}
         )
 
-    def plan(self, kv_cache_spec: dict[str, KVCacheSpec]) -> dict[str, KVCacheSpec]:
+    def get_kv_cache_configs(
+        self,
+        kv_cache_specs: list[dict[str, KVCacheSpec]],
+        available_memory: list[int],
+    ) -> list[KVCacheConfig]:
+        """Build per-worker KV cache configs for DeepSeek V4."""
+
+        merged_specs = self._merge_worker_specs(kv_cache_specs)
+        finalized_specs = self._post_process_kv_cache_specs(merged_specs)
+        global_groups = self._get_kv_cache_groups(finalized_specs)
+        worker_groups = [
+            self._project_groups_to_worker(global_groups, worker_spec)
+            for worker_spec in kv_cache_specs
+        ]
+
+        available_memory = self._apply_num_blocks_override(
+            worker_groups, available_memory
+        )
+        self._maybe_auto_fit_max_model_len(worker_groups, available_memory)
+        for groups, memory in zip(worker_groups, available_memory):
+            if groups:
+                self._check_model_len_capacity(groups, memory)
+
+        kv_cache_configs = [
+            self._build_config_from_groups(groups, memory)
+            for groups, memory in zip(worker_groups, available_memory)
+        ]
+        self._shrink_to_min_num_blocks(kv_cache_configs)
+        for config in kv_cache_configs:
+            if config.kv_cache_groups:
+                self._report_config(config)
+        return kv_cache_configs
+
+    def _post_process_kv_cache_specs(
+        self, kv_cache_spec: dict[str, KVCacheSpec]
+    ) -> dict[str, KVCacheSpec]:
         """Return KV cache specs with DeepSeek V4 block/page sizes finalized."""
 
         spec_infos = self._classify_specs(kv_cache_spec)
@@ -216,12 +258,346 @@ class DeepseekV4KVCachePlanner:
     def get_kv_cache_groups(
         self, kv_cache_specs: dict[str, KVCacheSpec]
     ) -> list[KVCacheGroupSpec]:
+        """Finalize and group one DeepSeek V4 KV cache spec map."""
+
+        self._finalize_specs = self._post_process_kv_cache_specs(kv_cache_specs)
+        return self._get_kv_cache_groups(
+        )
+
+    def get_kv_cache_config_from_groups(
+        self, kv_cache_groups: list[KVCacheGroupSpec], available_memory: int
+    ) -> KVCacheConfig:
+        """Build one DeepSeek V4 KV cache config from planned groups."""
+
+        return self._build_config_from_groups(kv_cache_groups, available_memory)
+
+    def _get_kv_cache_groups(
+        self, kv_cache_specs: dict[str, KVCacheSpec]
+    ) -> list[KVCacheGroupSpec]:
         """Build DeepSeek V4 KV cache groups from finalized specs."""
 
         grouped_specs = self._group_and_unify_specs(kv_cache_specs)
         kv_cache_groups = self._get_kv_cache_groups_from_uniform_groups(grouped_specs)
         self._annotate_eagle_groups(kv_cache_specs, kv_cache_groups)
         return kv_cache_groups
+
+    def get_max_model_len_capacity(
+        self, kv_cache_groups: list[KVCacheGroupSpec], available_memory: int
+    ) -> int:
+        """Return the largest model length supported by this KV layout."""
+
+        original_max_len = self.vllm_config.model_config.max_model_len
+
+        def fits(model_len: int) -> bool:
+            self.vllm_config.model_config.max_model_len = model_len
+            return self._max_memory_usage_bytes(kv_cache_groups) <= available_memory
+
+        try:
+            left, right = 1, original_max_len
+            if not fits(left):
+                return 0
+            capacity = 1
+            while left <= right:
+                mid = (left + right) // 2
+                if fits(mid):
+                    capacity = mid
+                    left = mid + 1
+                else:
+                    right = mid - 1
+            return capacity
+        finally:
+            self.vllm_config.model_config.max_model_len = original_max_len
+
+    def _merge_worker_specs(
+        self, kv_cache_specs: list[dict[str, KVCacheSpec]]
+    ) -> dict[str, KVCacheSpec]:
+        """Merge per-worker specs into one global DeepSeek V4 spec map."""
+
+        merged: dict[str, KVCacheSpec] = {}
+        for worker_specs in kv_cache_specs:
+            for layer_name, layer_spec in worker_specs.items():
+                if layer_name not in merged:
+                    merged[layer_name] = layer_spec
+                else:
+                    assert merged[layer_name] == layer_spec, (
+                        "The KV cache specs for the same layer are different "
+                        "across workers. This is not supported yet."
+                    )
+        return merged
+
+    def _project_groups_to_worker(
+        self,
+        global_groups: list[KVCacheGroupSpec],
+        worker_specs: dict[str, KVCacheSpec],
+    ) -> list[KVCacheGroupSpec]:
+        """Filter global groups to the layers owned by one worker."""
+
+        projected: list[KVCacheGroupSpec] = []
+        for group in global_groups:
+            layer_names = [
+                layer_name
+                for layer_name in group.layer_names
+                if layer_name in worker_specs
+            ]
+            group_spec = group.kv_cache_spec
+            if layer_names and isinstance(group_spec, UniformTypeKVCacheSpecs):
+                group_spec = UniformTypeKVCacheSpecs(
+                    block_size=group_spec.block_size,
+                    kv_cache_specs={
+                        layer_name: group_spec.kv_cache_specs[layer_name]
+                        for layer_name in layer_names
+                    },
+                )
+            projected.append(
+                KVCacheGroupSpec(
+                    layer_names,
+                    group_spec,
+                    is_eagle_group=group.is_eagle_group and bool(layer_names),
+                )
+            )
+
+        assert sum(len(group.layer_names) for group in projected) == len(worker_specs), (
+            "Some DeepSeek V4 KV cache layers are not assigned to any group."
+        )
+        return projected
+
+    def _apply_num_blocks_override(
+        self,
+        worker_groups: list[list[KVCacheGroupSpec]],
+        available_memory: list[int],
+    ) -> list[int]:
+        """Translate num block override into the equivalent memory budget."""
+
+        override = self.cache_config.num_gpu_blocks_override
+        if override is None:
+            return available_memory
+
+        adjusted_memory: list[int] = []
+        for groups, memory in zip(worker_groups, available_memory):
+            if not groups:
+                adjusted_memory.append(memory)
+                continue
+            bytes_per_block = self._pool_bytes_per_block(groups)
+            logger.info(
+                "Overriding num_gpu_blocks=%d with num_gpu_blocks_override=%d",
+                memory // bytes_per_block,
+                override,
+            )
+            adjusted_memory.append(override * bytes_per_block)
+        return adjusted_memory
+
+    def _maybe_auto_fit_max_model_len(
+        self,
+        worker_groups: list[list[KVCacheGroupSpec]],
+        available_memory: list[int],
+    ) -> None:
+        """Auto-fit max_model_len from per-worker DeepSeek V4 capacity."""
+
+        original_max_len = self.vllm_config.model_config.max_model_len
+        if self.vllm_config.model_config.original_max_model_len != -1:
+            return
+        if all(not groups for groups in worker_groups):
+            logger.info_once(
+                "Auto-fit max_model_len: attention-free model, "
+                "using derived max_model_len=%d",
+                original_max_len,
+            )
+            return
+
+        capacity = original_max_len
+        limiting_memory = available_memory[0]
+        for groups, memory in zip(worker_groups, available_memory):
+            if not groups:
+                continue
+            worker_capacity = self.get_max_model_len_capacity(groups, memory)
+            if worker_capacity < capacity:
+                capacity = worker_capacity
+                limiting_memory = memory
+
+        if capacity <= 0:
+            raise ValueError(
+                "Cannot auto-fit max_model_len: not enough GPU memory available "
+                "to serve even a single token. Try increasing "
+                "`gpu_memory_utilization`."
+            )
+        if capacity < original_max_len:
+            self.vllm_config.model_config.max_model_len = capacity
+            logger.info_once(
+                "Auto-fit max_model_len: reduced from %d to %d to fit in "
+                "available GPU memory (%s GiB available for KV cache)",
+                original_max_len,
+                capacity,
+                format_gib(limiting_memory),
+            )
+        else:
+            logger.info_once(
+                "Auto-fit max_model_len: full model context length %d fits in "
+                "available GPU memory",
+                original_max_len,
+            )
+
+    def _check_model_len_capacity(
+        self, kv_cache_groups: list[KVCacheGroupSpec], available_memory: int
+    ) -> None:
+        """Raise if current max_model_len exceeds DeepSeek V4 KV capacity."""
+
+        if available_memory <= 0:
+            raise ValueError(
+                "No available memory for the cache blocks. Try increasing "
+                "`gpu_memory_utilization` when initializing the engine."
+            )
+
+        needed_memory = self._max_memory_usage_bytes(kv_cache_groups)
+        if needed_memory <= available_memory:
+            return
+
+        capacity = self.get_max_model_len_capacity(kv_cache_groups, available_memory)
+        estimated_msg = ""
+        if capacity > 0:
+            estimated_msg = (
+                "Based on the available memory, the estimated maximum model "
+                f"length is {capacity}. "
+            )
+        raise ValueError(
+            "To serve at least one request with the model's max seq len "
+            f"({self.vllm_config.model_config.max_model_len}), "
+            f"({format_gib(needed_memory)} GiB KV cache is needed, which is "
+            "larger than the available KV cache memory "
+            f"({format_gib(available_memory)} GiB). {estimated_msg}"
+            "Try increasing `gpu_memory_utilization` or decreasing "
+            "`max_model_len` when initializing the engine."
+        )
+
+    def _build_config_from_groups(
+        self, kv_cache_groups: list[KVCacheGroupSpec], available_memory: int
+    ) -> KVCacheConfig:
+        """Create DeepSeek V4 KV cache tensors for one worker."""
+
+        if not kv_cache_groups:
+            return KVCacheConfig(
+                num_blocks=1,
+                kv_cache_tensors=[],
+                kv_cache_groups=kv_cache_groups,
+            )
+
+        full_mla_spec = kv_cache_groups[0].kv_cache_spec
+        assert isinstance(full_mla_spec, UniformTypeKVCacheSpecs)
+        page_sizes = sorted(full_mla_spec.get_page_sizes())
+        bytes_per_block = self._pool_bytes_per_block(kv_cache_groups)
+        num_blocks = max(available_memory // bytes_per_block, 0)
+        num_blocks = self._may_override_num_blocks(num_blocks)
+
+        bucketed_groups: list[dict[int, list[str]]] = []
+        for group in kv_cache_groups:
+            assert isinstance(group.kv_cache_spec, UniformTypeKVCacheSpecs)
+            specs = group.kv_cache_spec.kv_cache_specs
+            buckets: dict[int, list[str]] = defaultdict(list)
+            for name in group.layer_names:
+                buckets[specs[name].page_size_bytes].append(name)
+            bucketed_groups.append(buckets)
+
+        num_layer_tuples = max(
+            len(layers)
+            for buckets in bucketed_groups
+            for layers in buckets.values()
+        )
+        kv_cache_tensors: list[KVCacheTensor] = []
+        for tuple_idx in range(num_layer_tuples):
+            for page_size in page_sizes:
+                shared_by: list[str] = []
+                for buckets in bucketed_groups:
+                    bucket = buckets.get(page_size)
+                    if bucket is not None and tuple_idx < len(bucket):
+                        shared_by.append(bucket[tuple_idx])
+                kv_cache_tensors.append(
+                    KVCacheTensor(
+                        size=page_size * num_blocks,
+                        shared_by=shared_by,
+                    )
+                )
+
+        return KVCacheConfig(
+            num_blocks=num_blocks,
+            kv_cache_tensors=kv_cache_tensors,
+            kv_cache_groups=kv_cache_groups,
+        )
+
+    def _shrink_to_min_num_blocks(
+        self, kv_cache_configs: list[KVCacheConfig]
+    ) -> None:
+        """Use one num_blocks value across workers."""
+
+        min_num_blocks = min(config.num_blocks for config in kv_cache_configs)
+        for config in kv_cache_configs:
+            old_num_blocks = config.num_blocks
+            config.num_blocks = min_num_blocks
+            for tensor in config.kv_cache_tensors:
+                assert tensor.size % old_num_blocks == 0
+                tensor.size = tensor.size // old_num_blocks * min_num_blocks
+
+    def _may_override_num_blocks(self, num_blocks: int) -> int:
+        override = self.cache_config.num_gpu_blocks_override
+        return override if override is not None else num_blocks
+
+    def _pool_bytes_per_block(self, kv_cache_groups: list[KVCacheGroupSpec]) -> int:
+        """Bytes consumed by one DeepSeek V4 shared KV block."""
+
+        full_mla_spec = kv_cache_groups[0].kv_cache_spec
+        assert isinstance(full_mla_spec, UniformTypeKVCacheSpecs)
+        layer_tuple_page_bytes = sum(full_mla_spec.get_page_sizes())
+        num_layer_tuples = max(
+            cast_group.kv_cache_spec.get_num_layer_tuples()
+            for cast_group in kv_cache_groups
+            if isinstance(cast_group.kv_cache_spec, UniformTypeKVCacheSpecs)
+        )
+        return layer_tuple_page_bytes * num_layer_tuples
+
+    def _max_memory_usage_bytes(
+        self, kv_cache_groups: list[KVCacheGroupSpec]
+    ) -> int:
+        """Return bytes needed to hold one max_model_len request."""
+
+        if not kv_cache_groups:
+            return 0
+        full_mla_spec = kv_cache_groups[0].kv_cache_spec
+        assert isinstance(full_mla_spec, UniformTypeKVCacheSpecs)
+        layer_tuple_bytes = sum(full_mla_spec.get_page_sizes())
+        num_layer_tuples = max(
+            group.kv_cache_spec.get_num_layer_tuples()
+            for group in kv_cache_groups
+            if isinstance(group.kv_cache_spec, UniformTypeKVCacheSpecs)
+        )
+
+        total = 0
+        for group in kv_cache_groups:
+            if not group.layer_names:
+                continue
+            group_spec = group.kv_cache_spec
+            assert isinstance(group_spec, UniformTypeKVCacheSpecs)
+            pages = group_spec.max_memory_usage_pages(self.vllm_config)
+            total += num_layer_tuples * pages * layer_tuple_bytes
+        return total
+
+    def _max_concurrency(self, kv_cache_config: KVCacheConfig) -> float:
+        bytes_per_block = self._pool_bytes_per_block(kv_cache_config.kv_cache_groups)
+        blocks_per_request = cdiv(
+            self._max_memory_usage_bytes(kv_cache_config.kv_cache_groups),
+            bytes_per_block,
+        )
+        return kv_cache_config.num_blocks / blocks_per_request
+
+    def _report_config(self, kv_cache_config: KVCacheConfig) -> None:
+        max_model_len = self.vllm_config.model_config.max_model_len
+        max_concurrency = self._max_concurrency(kv_cache_config)
+        logger.info_once(
+            "GPU KV cache size: %s tokens",
+            f"{int(max_concurrency * max_model_len):,}",
+        )
+        logger.info_once(
+            "Maximum concurrency for %s tokens per request: %.2fx",
+            f"{max_model_len:,}",
+            max_concurrency,
+        )
 
     def _classify_specs(
         self, kv_cache_specs: dict[str, KVCacheSpec]
@@ -356,7 +732,7 @@ class DeepseekV4KVCachePlanner:
                     supported = (
                         DeepseekSparseSWABackend.get_supported_kernel_block_sizes()
                     )
-                    swa_block_size = infer_block_size_against_buckets(
+                    swa_block_size = _infer_block_size_against_buckets(
                         bytes_per_token=spec_info.bytes_per_token,
                         canonical_page_sizes=canonical.page_sizes,
                         alignment=spec_info.alignment,
@@ -385,7 +761,7 @@ class DeepseekV4KVCachePlanner:
                             bucket,
                         )
                     )
-                inferred[spec_info.layer_name] = infer_block_size_against_buckets(
+                inferred[spec_info.layer_name] = _infer_block_size_against_buckets(
                     bytes_per_token=spec_info.bytes_per_token,
                     canonical_page_sizes=canonical.page_sizes,
                     alignment=spec_info.alignment,
@@ -437,10 +813,6 @@ class DeepseekV4KVCachePlanner:
             layer_name: finalized_kv_cache_specs.get(layer_name, spec)
             for layer_name, spec in kv_cache_specs.items()
         }
-        print("Finalized DeepSeek V4 KV cache specs:")
-        for layer_name, spec in res.items():
-            print(f"  {layer_name}: {spec}")
-
         return res
 
     def _group_and_unify_specs(

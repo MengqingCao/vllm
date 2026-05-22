@@ -739,11 +739,13 @@ class _ModelInfo:
     supports_mamba_prefix_caching: bool
     supports_transcription: bool
     supports_transcription_only: bool
+    kv_cache_planner_cls: str | None = None
 
     @staticmethod
     def from_model_cls(model: type[nn.Module]) -> "_ModelInfo":
         return _ModelInfo(
             architecture=model.__name__,
+            kv_cache_planner_cls=getattr(model, "kv_cache_planner_cls", None),
             is_text_generation_model=is_text_generation_model(model),
             is_pooling_model=is_pooling_model(model),
             default_seq_pooling_type=get_default_seq_pooling_type(model),

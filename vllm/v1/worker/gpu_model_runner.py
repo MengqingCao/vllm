@@ -6146,22 +6146,39 @@ class GPUModelRunner(
         gc.collect()
 
     def _init_minimal_kv_cache_for_profiling(self) -> None:
+        from vllm.utils.import_utils import resolve_obj_by_qualname
         from vllm.v1.core.kv_cache_utils import (
             get_kv_cache_config_from_groups,
             get_kv_cache_groups,
         )
 
         kv_cache_spec = self.get_kv_cache_spec()
-        kv_cache_groups = get_kv_cache_groups(self.vllm_config, kv_cache_spec)
+        kv_cache_planner_cls_path = self.vllm_config.model_config.kv_cache_planner_cls
+        kv_cache_planner = None
+        if kv_cache_planner_cls_path is not None:
+            kv_cache_planner_cls = resolve_obj_by_qualname(kv_cache_planner_cls_path)
+            kv_cache_planner = kv_cache_planner_cls(self.vllm_config)
+            kv_cache_groups = kv_cache_planner.get_kv_cache_groups_for_specs(
+                kv_cache_spec
+            )
+        else:
+            kv_cache_groups = get_kv_cache_groups(self.vllm_config, kv_cache_spec)
         min_blocks = self.compilation_config.max_cudagraph_capture_size or 1
 
         # Temporarily change num_gpu_blocks_override to allocate a minimal KV cache
         saved_override = self.cache_config.num_gpu_blocks_override
         self.cache_config.num_gpu_blocks_override = min_blocks
-        minimal_config = get_kv_cache_config_from_groups(
-            self.vllm_config, kv_cache_groups, available_memory=0
-        )
-        self.cache_config.num_gpu_blocks_override = saved_override
+        try:
+            if kv_cache_planner is not None:
+                minimal_config = kv_cache_planner.get_kv_cache_config_from_groups(
+                    kv_cache_groups, available_memory=0
+                )
+            else:
+                minimal_config = get_kv_cache_config_from_groups(
+                    self.vllm_config, kv_cache_groups, available_memory=0
+                )
+        finally:
+            self.cache_config.num_gpu_blocks_override = saved_override
 
         self.initialize_kv_cache(minimal_config, is_profiling=True)
         self.cache_config.num_gpu_blocks = minimal_config.num_blocks

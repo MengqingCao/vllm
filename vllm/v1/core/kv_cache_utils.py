@@ -16,6 +16,7 @@ from vllm import envs
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.utils.hashing import sha256_cbor, xxhash_cbor
+from vllm.utils.import_utils import resolve_obj_by_qualname
 from vllm.utils.math_utils import cdiv, round_up
 from vllm.utils.mem_utils import format_gib
 from vllm.utils.torch_utils import get_dtype_size
@@ -916,17 +917,6 @@ def _pool_bytes_per_block(kv_cache_groups: list[KVCacheGroupSpec]) -> int:
         kv_cache_groups[0].kv_cache_spec, UniformTypeKVCacheSpecs
     ):
         return kv_cache_groups[0].kv_cache_spec.page_size_bytes
-    if all(
-        isinstance(g.kv_cache_spec, UniformTypeKVCacheSpecs) for g in kv_cache_groups
-    ):
-        # DeepseekV4: shared layout sized by the largest per-page-size bucket.
-        full_mla_spec = cast(UniformTypeKVCacheSpecs, kv_cache_groups[0].kv_cache_spec)
-        layer_tuple_page_bytes = sum(full_mla_spec.get_page_sizes())
-        num_layer_tuples = max(
-            cast(UniformTypeKVCacheSpecs, g.kv_cache_spec).get_num_layer_tuples()
-            for g in kv_cache_groups
-        )
-        return layer_tuple_page_bytes * num_layer_tuples
     group_size = max(len(g.layer_names) for g in kv_cache_groups)
     page_size = get_uniform_page_size([g.kv_cache_spec for g in kv_cache_groups])
     return page_size * group_size
@@ -1176,63 +1166,6 @@ def _get_kv_cache_groups_uniform_page_size(
     return create_kv_cache_group_specs(kv_cache_spec, grouped_layers)
 
 
-def _get_kv_cache_config_deepseek_v4(
-    vllm_config: VllmConfig,
-    kv_cache_groups: list[KVCacheGroupSpec],
-    available_memory: int,
-) -> tuple[int, list[KVCacheTensor]]:
-    """DeepseekV4 KV cache tensor layout planning.
-
-    Precondition: kv_cache_groups[0] is the full-MLA group; its page sizes
-    define the canonical bucket set. Non-full-MLA groups must have been
-    page_size-padded upstream by DeepseekV4KVCachePlanner so
-    every layer's page_size matches one of the full-MLA bucket sizes.
-
-    For each group, bucket its layers by page_size_bytes and place each
-    layer at tuple_idx = position-within-bucket. Emit one KVCacheTensor
-    per (tuple_idx, bucket) whose shared_by is the union of per-group
-    layers at that slot.
-    """
-    full_mla_spec = kv_cache_groups[0].kv_cache_spec
-    assert isinstance(full_mla_spec, UniformTypeKVCacheSpecs)
-    page_sizes = sorted(full_mla_spec.get_page_sizes())
-    layer_tuple_page_bytes = sum(page_sizes)
-
-    # Pre-bucket each group's layers by page_size (registration order within
-    # bucket). bucketed[g_idx][page_size] = [layer_name, ...].
-    bucketed: list[dict[int, list[str]]] = []
-    for group in kv_cache_groups:
-        assert isinstance(group.kv_cache_spec, UniformTypeKVCacheSpecs)
-        specs = group.kv_cache_spec.kv_cache_specs
-        b: dict[int, list[str]] = defaultdict(list)
-        for name in group.layer_names:
-            b[specs[name].page_size_bytes].append(name)
-        bucketed.append(b)
-
-    # num_layer_tuples = longest bucket list across all groups. For the
-    # full-MLA group this equals the count of layers in the largest
-    # per-page-size bucket (= get_num_layer_tuples()); for SWA sub-groups
-    # this equals the sub-group size (each has a single page_size).
-    num_layer_tuples = max(len(layers) for b in bucketed for layers in b.values())
-
-    num_blocks = available_memory // (layer_tuple_page_bytes * num_layer_tuples)
-    num_blocks = may_override_num_blocks(vllm_config, num_blocks)
-
-    kv_cache_tensors: list[KVCacheTensor] = []
-    for tuple_idx in range(num_layer_tuples):
-        for ps in page_sizes:
-            shared_by: list[str] = []
-            for b in bucketed:
-                bucket = b.get(ps)
-                if bucket is not None and tuple_idx < len(bucket):
-                    shared_by.append(bucket[tuple_idx])
-            kv_cache_tensors.append(
-                KVCacheTensor(size=ps * num_blocks, shared_by=shared_by)
-            )
-
-    return num_blocks, kv_cache_tensors
-
-
 def get_kv_cache_config_from_groups(
     vllm_config: VllmConfig,
     kv_cache_groups: list[KVCacheGroupSpec],
@@ -1277,15 +1210,6 @@ def get_kv_cache_config_from_groups(
             )
             for layer_name in kv_cache_groups[0].layer_names
         ]
-    elif all(
-        isinstance(group.kv_cache_spec, UniformTypeKVCacheSpecs)
-        for group in kv_cache_groups
-    ):
-        # DeepseekV4: UniformTypeKVCacheSpecs but multiple groups.
-        # Delegate to the DeepseekV4-specific allocator.
-        num_blocks, kv_cache_tensors = _get_kv_cache_config_deepseek_v4(
-            vllm_config, kv_cache_groups, available_memory
-        )
     else:
         # General case:
         # We will have group_size memory pools, each is shared by one layer from
@@ -1430,13 +1354,6 @@ def get_kv_cache_groups(
     Returns:
         The generated KVCacheGroups
     """
-    from vllm.v1.core.deepseek_v4_kv_cache_planner import DeepseekV4KVCachePlanner
-
-    if vllm_config.model_config.hf_config.model_type == "deepseek_v4":
-        deepseek_v4_planner = DeepseekV4KVCachePlanner(vllm_config)
-        kv_cache_spec = deepseek_v4_planner.plan(kv_cache_spec)
-        return deepseek_v4_planner.get_kv_cache_groups(kv_cache_spec)
-
     if vllm_config.scheduler_config.disable_hybrid_kv_cache_manager:
         unify_hybrid_kv_cache_specs(kv_cache_spec)
 
@@ -1562,32 +1479,6 @@ def _max_memory_usage_bytes_from_groups(
             spec.max_memory_usage_bytes(vllm_config)
             for spec in per_layer_specs.values()
         )
-    elif all(
-        isinstance(group.kv_cache_spec, UniformTypeKVCacheSpecs)
-        for group in kv_cache_groups
-    ):
-        # Special case (only DeepseekV4 for now): all groups are
-        # UniformTypeKVCacheSpecs.
-        # They must already be page_size aligned and share a common padded
-        # layer-tuple layout. Even groups with fewer actual tuples still reserve
-        # the global number of tuple slots in the shared tensor layout.
-        full_mla_spec = cast(UniformTypeKVCacheSpecs, kv_cache_groups[0].kv_cache_spec)
-        layer_tuple_bytes = sum(full_mla_spec.get_page_sizes())
-        num_layer_tuples = max(
-            cast(UniformTypeKVCacheSpecs, group.kv_cache_spec).get_num_layer_tuples()
-            for group in kv_cache_groups
-        )
-
-        total_max_mem_usage_bytes = 0
-        for group in kv_cache_groups:
-            group_spec = cast(UniformTypeKVCacheSpecs, group.kv_cache_spec)
-            g_max_mem_usage_pages = group_spec.max_memory_usage_pages(vllm_config)
-            g_max_mem_usage_page_bytes = (
-                num_layer_tuples * g_max_mem_usage_pages * layer_tuple_bytes
-            )
-            total_max_mem_usage_bytes += g_max_mem_usage_page_bytes
-        return total_max_mem_usage_bytes
-
     # General case: group_size pools, each shared by one layer per group
     # Memory = group_size * page_size * blocks_for_max_len
     group_size = max(len(group.layer_names) for group in kv_cache_groups)
@@ -1743,7 +1634,7 @@ def _project_kv_cache_groups_to_worker(
     return projected_groups
 
 
-def get_kv_cache_configs(
+def _get_kv_cache_configs_default(
     vllm_config: VllmConfig,
     kv_cache_specs: list[dict[str, KVCacheSpec]],
     available_memory: list[int],
@@ -1875,6 +1766,22 @@ def get_kv_cache_configs(
             _report_kv_cache_config(vllm_config, kv_cache_config)
 
     return kv_cache_configs
+
+
+def get_kv_cache_configs(
+    vllm_config: VllmConfig,
+    kv_cache_specs: list[dict[str, KVCacheSpec]],
+    available_memory: list[int],
+) -> list[KVCacheConfig]:
+    model_custom_kvcache_planner = vllm_config.model_config.kv_cache_planner_cls
+    if model_custom_kvcache_planner is not None:
+        kv_cache_planner_cls = resolve_obj_by_qualname(model_custom_kvcache_planner)
+        kv_cache_planner = kv_cache_planner_cls(vllm_config)
+        return kv_cache_planner.get_kv_cache_configs(kv_cache_specs, available_memory)
+
+    return _get_kv_cache_configs_default(
+        vllm_config, kv_cache_specs, available_memory
+    )
 
 
 class BlockHashListWithBlockSize:

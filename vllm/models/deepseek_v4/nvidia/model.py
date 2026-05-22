@@ -1544,6 +1544,9 @@ def _make_deepseek_v4_weights_mapper(expert_dtype: str) -> WeightsMapper:
 
 class DeepseekV4ForCausalLM(nn.Module, SupportsPP):
     model_cls = DeepseekV4Model
+    kv_cache_planner_cls = (
+        "vllm.v1.core.deepseek_v4_kv_cache_planner.DeepseekV4KVCachePlanner"
+    )
 
     # Default mapper assumes the original FP4-expert checkpoint layout.
     # Overridden per-instance in __init__ when expert_dtype != "fp4".
