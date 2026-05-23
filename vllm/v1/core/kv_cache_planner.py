@@ -13,11 +13,11 @@ from vllm.v1.kv_cache_interface import (
 class KVCachePlanner(ABC):
     """Plan model-specific KV cache layouts.
 
-    Most models use the default KV cache planning path in
-    ``vllm.v1.core.kv_cache_utils``. A model should declare a planner only when
-    its KV cache layout cannot be expressed by the default grouping and tensor
-    allocation logic. The planner owns the model-specific path end-to-end:
-    spec normalization, grouping, capacity checks, and KV tensor planning.
+    Most models use ``ModelKVCachePlanner``. A model should declare a custom
+    planner only when its KV cache layout cannot be expressed by the default
+    grouping and tensor allocation logic. The planner owns the model-specific
+    path end-to-end: spec normalization, grouping, capacity checks, and KV
+    tensor planning.
     """
 
     def __init__(self, vllm_config: VllmConfig):
