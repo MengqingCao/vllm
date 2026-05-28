@@ -239,8 +239,8 @@ class ModelKVCachePlanner(KVCachePlanner):
                     )
         return merged
 
+    @staticmethod
     def _project_groups_to_worker(
-        self,
         global_groups: list[KVCacheGroupSpec],
         worker_spec: dict[str, KVCacheSpec],
     ) -> list[KVCacheGroupSpec]:
@@ -495,9 +495,8 @@ class ModelKVCachePlanner(KVCachePlanner):
                 grouped_layers.append(layers[i::num_groups])
         return create_kv_cache_group_specs(kv_cache_specs, grouped_layers)
 
-    def _unify_hybrid_kv_cache_specs(
-        self, kv_cache_specs: dict[str, KVCacheSpec]
-    ) -> None:
+    @staticmethod
+    def _unify_hybrid_kv_cache_specs(kv_cache_specs: dict[str, KVCacheSpec]) -> None:
         """Convert hybrid KV specs to one type when hybrid manager is disabled."""
 
         if (
@@ -539,9 +538,7 @@ class ModelKVCachePlanner(KVCachePlanner):
             )
             uniform_block_size = any_full_spec.block_size
 
-        if has_full_attention and (
-            has_sliding_window or has_chunked_local_attention
-        ):
+        if has_full_attention and (has_sliding_window or has_chunked_local_attention):
             for layer_name, spec in kv_cache_specs.items():
                 if isinstance(spec, SlidingWindowMLASpec):
                     kv_cache_specs[layer_name] = MLAAttentionSpec(
@@ -624,7 +621,7 @@ class ModelKVCachePlanner(KVCachePlanner):
 
     @staticmethod
     def _is_kv_cache_type_attention_free(
-        kv_cache_specs: dict[str, KVCacheSpec]
+        kv_cache_specs: dict[str, KVCacheSpec],
     ) -> bool:
         """Return whether the model has no KV cache."""
 

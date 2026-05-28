@@ -203,9 +203,20 @@ class DeepseekV4KVCachePlanner(KVCachePlanner):
         super().__init__(vllm_config)
         # main_block_size refers to the block_size of MLAAttentionSpec
         self.main_block_size = vllm_config.cache_config.block_size
-        self.supported_compress_ratios = (
-            set(vllm_config.model_config.hf_config.compress_ratios) | {1}
-        )
+        supported = DeepseekV4FlashMLASparseBackend.get_supported_kernel_block_sizes()
+        if (
+            not _supports_block_size(self.main_block_size, supported)
+            and not self.cache_config.user_specified_block_size
+        ):
+            self.main_block_size = (
+                DeepseekV4FlashMLASparseBackend.get_preferred_block_size(
+                    self.main_block_size
+                )
+            )
+            self.cache_config.block_size = self.main_block_size
+        self.supported_compress_ratios = set(
+            vllm_config.model_config.hf_config.compress_ratios
+        ) | {1}
 
     def get_kv_cache_configs(
         self,
@@ -638,11 +649,12 @@ class DeepseekV4KVCachePlanner(KVCachePlanner):
                 cache_type = DeepseekV4CacheType.SWA
             elif isinstance(spec, MLAAttentionSpec):
                 cache_type = DeepseekV4CacheType.MAIN_MLA
-            spec_infos.append(
-                self._create_info(
-                    layer_name, cache_type, spec
+            else:
+                raise AssertionError(
+                    "Unsupported DeepSeek V4 sliding-window MLA cache name: "
+                    f"{layer_name!r}"
                 )
-            )
+            spec_infos.append(self._create_info(layer_name, cache_type, spec))
         return spec_infos
 
     def _create_info(
