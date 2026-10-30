@@ -1395,6 +1395,10 @@ class MooncakeStoreWorker:
             extra_config.get("save_decode_cache", False)
         )
         self.load_async = extra_config.get("load_async", True)
+        self.save_device_sync = (
+            str(extra_config.get("save_device_sync", "False")).strip().lower()
+            == "true"
+        )
         # Mirrors MooncakeStoreConnector._capacity_only.
         self._capacity_only = (
             self.kv_role == "kv_consumer"
@@ -1422,6 +1426,16 @@ class MooncakeStoreWorker:
         setup_mooncake_store(self.store, store_config, local_hostname)
 
         preferred_segment = rdma_utils.get_configured_preferred_segment(extra_config)
+        # Mooncake builds without ENABLE_MULTI_PROTOCOL (e.g. ROCm 0.3.13.post1)
+        # republish every segment as protocol "hip", so a transfer to another
+        # process's host segment on this node fails with TRANSFER_FAIL. Keys
+        # carry the TP rank, so a rank only ever reads the objects it wrote.
+        self.prefer_local_segment = (
+            str(extra_config.get("prefer_local_segment", "False")).strip().lower()
+            == "true"
+        )
+        if preferred_segment is None and self.prefer_local_segment:
+            preferred_segment = self.store.get_hostname()
         self.preferred_segment = preferred_segment
         self.store_replicate_config = ReplicateConfig()
         self.enable_group_semantics = (
@@ -1457,7 +1471,7 @@ class MooncakeStoreWorker:
                     "preferred_segment; SSD tier will only see puts that "
                     "happen to land on the owner segment."
                 )
-            if preferred_segment is not None:
+            if preferred_segment is not None and not self.prefer_local_segment:
                 logger.warning(
                     "preferred_segment=%s with mode=embedded: rank-"
                     "contributed segments will be idle.",
@@ -1965,6 +1979,13 @@ class MooncakeStoreWorker:
         current_event = None
         for request in metadata.requests:
             if request.can_save:
+                if self.save_device_sync:
+                    # On MiniMax-M3.1 (ROCm, V2 model runner, DSpark) an event
+                    # recorded on the current stream did not cover every KV
+                    # write: Store reloads decoded garbage while the same
+                    # blocks sent P->D were correct. Trades save overlap for
+                    # correctness.
+                    torch.cuda.synchronize()
                 current_event = torch.cuda.Event()
                 current_event.record()
                 break
