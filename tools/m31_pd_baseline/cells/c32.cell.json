@@ -1,0 +1,132 @@
+{
+  "id": "minimax-m3.1-flash-vllm-m31-vllm-1p1d-tp4-mcstore-c32-mooncake_store",
+  "suite": "mooncake_store",
+  "name": "m31-vllm-1p1d-tp4-mcstore-c32",
+  "model": "MiniMax-M3.1-Flash-vLLM",
+  "backend": "vllm",
+  "image": "vllm/vllm-openai-rocm:minimax-m31-flash@sha256:ae8681212aa5291d8c27f06e90016435e3fca144a68fd5c439231f6475f74569",
+  "model_path": "/share_nfs/models/amd/MiniMax-M3.1-Flash-Quark-MXFP4",
+  "precision": "MXFP4",
+  "topology": "1p1d",
+  "display_topology": "1P1D-TP4",
+  "pd_worker_layout": "single_node",
+  "disaggregated": true,
+  "nodes": [],
+  "num_nodes": 1,
+  "isl": [
+    1048576
+  ],
+  "osl": 1024,
+  "concurrency": [
+    32
+  ],
+  "concurrency_x": "32",
+  "random_range_ratio": "0.8",
+  "request_rate": "inf",
+  "num_prompts_multiplier": 10,
+  "wait_server_timeout": 7200,
+  "wait_router_timeout": 300,
+  "benchmark": {
+    "random_range_ratio": 0.8,
+    "request_rate": "inf",
+    "num_prompts_multiplier": 10,
+    "wait_server_timeout": 7200,
+    "wait_router_timeout": 300,
+    "kind": "aiperf_agentic",
+    "scenario": "agentx",
+    "agentx_harness_version": "1.0.12",
+    "public_dataset": "semianalysis_cc_traces_weka_062126",
+    "max_context_length": 1048576,
+    "num_dataset_entries": 393,
+    "benchmark_duration": 3600
+  },
+  "runner": {
+    "slurm_account": "amd-atom",
+    "slurm_partition": "amd-spur",
+    "slurm_submit_runner": "atomesh-cicd",
+    "gpus_per_node": 8,
+    "cpus_per_task": 114,
+    "time_limit": "08:00:00",
+    "log_root": "/share_nfs/mengqing/code/ATOM/exp_20261030-0225_m31-vllm-1p1d-tp4-mcstore-c32/logs",
+    "exclude_nodes": "pit2-p03-g09,pit2-p03-g10,pit2-p03-g23,pit2-p03-g25,pit2-p03-g53,pit2-p03-g40,pit2-p03-g42,pit2-p03-g12",
+    "slurm_qos": "amd-atom-qos"
+  },
+  "service": {
+    "prefill": {
+      "port": 8100,
+      "tp": 4,
+      "workers": 1
+    },
+    "decode": {
+      "port": 8200,
+      "tp": 4,
+      "workers": 1
+    },
+    "router": {
+      "port": 8000,
+      "policy": "random",
+      "prometheus_port": 29100
+    }
+  },
+  "server_args": {
+    "trust_remote_code": true,
+    "kv_cache_dtype": "nvfp4",
+    "block_size": 128,
+    "gpu_memory_utilization": 0.9,
+    "max_model_len": 1048576,
+    "max_num_seqs": 128,
+    "decode_max_num_seqs": 128,
+    "max_num_batched_tokens": 32768,
+    "decode_max_num_batched_tokens": 32768,
+    "enable_prefix_caching": true
+  },
+  "env": {
+    "common": {
+      "PYTHONUNBUFFERED": "1",
+      "ATOM_PD_RANK_MAPPING_POLICY": "none",
+      "ATOMESH_VLLM_MODE": "benchmark",
+      "ATOMESH_VLLM_KFD_PIN_ADAPTER": "1"
+    },
+    "prefill": {
+      "PYTHONUNBUFFERED": "1",
+      "ATOM_PD_RANK_MAPPING_POLICY": "none",
+      "ATOMESH_VLLM_MODE": "benchmark",
+      "ATOMESH_VLLM_KFD_PIN_ADAPTER": "1"
+    },
+    "decode": {
+      "PYTHONUNBUFFERED": "1",
+      "ATOM_PD_RANK_MAPPING_POLICY": "none",
+      "ATOMESH_VLLM_MODE": "benchmark",
+      "ATOMESH_VLLM_KFD_PIN_ADAPTER": "1"
+    },
+    "router": {
+      "PYTHONUNBUFFERED": "1",
+      "ATOM_PD_RANK_MAPPING_POLICY": "none",
+      "ATOMESH_VLLM_MODE": "benchmark"
+    }
+  },
+  "run_eval": false,
+  "eval_only": false,
+  "accuracy": {
+    "task": "gsm8k",
+    "fewshot": 3,
+    "limit": null,
+    "concurrency": [
+      1
+    ],
+    "model_type": "local-completions",
+    "endpoint": "completions",
+    "batch_size": null,
+    "max_gen_toks": null,
+    "apply_chat_template": false,
+    "fewshot_as_multiturn": false,
+    "threshold": null,
+    "agent_workers": null,
+    "agent_step_limit": null,
+    "case_timeout": null,
+    "agent_timeout": null,
+    "score_timeout": null,
+    "max_workers": null,
+    "instance_timeout": null
+  }
+}
