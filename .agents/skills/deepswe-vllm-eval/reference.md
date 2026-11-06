@@ -10,7 +10,7 @@ Same for vLLM and SGLang unless the user replaces a line.
 | Piece | Default |
 | --- | --- |
 | Model | `MiniMaxAI/MiniMax-M3.1-Flash` revision `ce7f4df87d2e05262f5775f373dac4772f134041` (252.45 GB, draft head under `dspark/`) |
-| HF cache | mount `/SFS-aGqda6ct`, `HF_HUB_CACHE=/SFS-aGqda6ct/huggingface/mencao/hub`, `HF_HUB_OFFLINE=1`. Shared `/SFS-aGqda6ct/huggingface/hub` is not writable. Ask the user for their own cache path. |
+| HF cache | User-provided. Mount its parent directory into the container at the same path (read-only), set `HF_HUB_CACHE=<user-hf-cache-path>` and `HF_HUB_OFFLINE=1`. Do not assume a shared cache path; the user must give it at intake. |
 | DeepSWE | `https://github.com/datacurve-ai/deep-swe` commit `0b9fabbb63b9104d678fe965e1632f2dd9eaa2ea` (113 `task.toml`). HF `datacurve/deep-swe` is gated; do not use it unless the user says so. |
 | Pier | `datacurve-pier==0.3.1` (`uv tool install`). v1.1 grading needs Pier > 0.3.0. |
 | Agent | `mini-swe-agent` 2.4.5 plus sandbox package `mcp` |
@@ -34,7 +34,7 @@ It is not the server. Install `https://github.com/vllm-project/vllm.git` ref
 default from `vllm/vllm-openai:minimax-m31-flash-arm64-cu134` or
 `vllm/vllm-openai:v0.33.0`. Record SHA at `$LOG_DIR/vllm-sha.txt`.
 
-`serve.sh` env: `HF_CACHE_MOUNT=/SFS-aGqda6ct`, `HF_HUB_OFFLINE=1`,
+`serve.sh` env: `HF_CACHE_MOUNT=<user-hf-cache-parent>`, `HF_HUB_CACHE=<user-hf-cache-path>`, `HF_HUB_OFFLINE=1`,
 `VLLM_ENGINE_READY_TIMEOUT_S=7200`.
 
 Launch with `python3 -m vllm.entrypoints.cli.main serve`. Flags:
