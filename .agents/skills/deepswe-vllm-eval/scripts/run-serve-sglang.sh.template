@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# SGLang only. Do not add vLLM flags.
+set -euo pipefail
+export FMHA_SM100_ALLOW_JIT=1
+exec > /logs/sglang.log 2>&1
+exec python3 -m sglang.launch_server \
+  --model-path __MODEL__ \
+  --host 127.0.0.1 \
+  --port 8000

@@ -1,0 +1,31 @@
+job_name: __JOB_NAME__
+jobs_dir: __JOBS_DIR__
+n_attempts: __N_ATTEMPTS__
+n_concurrent_trials: __N_CONCURRENT__
+environment:
+  type: docker
+  delete: true
+agents:
+  - name: mini-swe-agent
+    model_name: __MODEL_NAME__
+    env:
+      MSWEA_API_KEY: dummy
+    kwargs:
+      version: "__AGENT_VERSION__"
+      extra_python_packages:
+        - mcp
+      config_yaml: |
+        model:
+          model_kwargs:
+            api_base: __API_BASE__
+            temperature: __TEMPERATURE__
+            top_p: __TOP_P__
+            timeout: 3600
+            extra_body:
+              chat_template_kwargs:
+                reasoning_effort: __REASONING_EFFORT__
+datasets:
+  - path: __DATASET_PATH__
+    # Validation only. Remove task_names for the full job.
+    task_names:
+      - "__TASK_FILTER__"

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# vLLM only. Flags are the confirmed vLLM serve args.
+set -euo pipefail
+exec > /logs/vllm.log 2>&1
+exec python3 -m vllm.entrypoints.cli.main serve __MODEL__ \
+  --host 127.0.0.1 \
+  --port 8000
